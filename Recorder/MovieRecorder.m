@@ -246,6 +246,11 @@ static NSError *RecorderError(NSString *description)
     }
 
     // The previous recording, if any, has left the queue by the time this runs
+    os_unfair_lock_lock(&_lock);
+    _outputSize = NSZeroSize;
+    os_unfair_lock_unlock(&_lock);
+
+    __block NSError *writerError = nil;
     dispatch_sync(_queue, ^{
         self->_url = url;
         self->_settings = [settings copy];
@@ -253,7 +258,21 @@ static NSError *RecorderError(NSString *description)
         self->_input = nil;
         self->_adaptor = nil;
         self->_lastTime = kCMTimeInvalid;
+        // Creating the writer takes long enough for a few frames to arrive. When the movie's size is given we do
+        // it now, rather than when the first frame arrives, so that the frames which follow it are not lost.
+        if (settings.width > 0 && settings.height > 0)
+        {
+            writerError = [self createWriterForFrameOfWidth:settings.width height:settings.height];
+        }
     });
+    if (writerError)
+    {
+        if (error)
+        {
+            *error = writerError;
+        }
+        return NO;
+    }
 
     os_unfair_lock_lock(&_lock);
     _pacer = [[FramePacer alloc] initWithFramesPerSecond:settings.framesPerSecond];
@@ -261,7 +280,6 @@ static NSError *RecorderError(NSString *description)
     _framesWritten = 0;
     _framesDropped = 0;
     _framesPending = 0;
-    _outputSize = NSZeroSize;
     _recording = YES;
     os_unfair_lock_unlock(&_lock);
     return YES;
@@ -363,9 +381,21 @@ static NSError *RecorderError(NSString *description)
     [writer addInput:input];
     if (![writer startWriting])
     {
-        return writer.error ?: RecorderError(@"The movie file could not be written");
+        NSError *startError = writer.error ?: RecorderError(@"The movie file could not be written");
+        [writer cancelWriting];
+        return startError;
     }
     [writer startSessionAtSourceTime:kCMTimeZero];
+
+    // The writer accepts sizes for which no picture can be allocated: find out now rather than at every frame
+    CVPixelBufferRef probe = NULL;
+    CVPixelBufferPoolRef pool = adaptor.pixelBufferPool;
+    if (pool == NULL || CVPixelBufferPoolCreatePixelBuffer(kCFAllocatorDefault, pool, &probe) != kCVReturnSuccess)
+    {
+        [writer cancelWriting];
+        return RecorderError([NSString stringWithFormat:@"A movie of %ld \u00D7 %ld cannot be written", (long)width, (long)height]);
+    }
+    CVPixelBufferRelease(probe);
 
     _writer = writer;
     _input = input;
@@ -467,6 +497,8 @@ static NSError *RecorderError(NSString *description)
         if (target) CFRelease(target);
         if (pixelBuffer) CVPixelBufferRelease(pixelBuffer);
         [self frameDoneWritten:NO];
+        // Not a frame lost for want of time: nothing more can be written
+        [self failWithError:RecorderError(@"The movie could not be written: no picture could be allocated")];
         return;
     }
 

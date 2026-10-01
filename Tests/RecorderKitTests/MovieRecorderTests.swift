@@ -286,6 +286,24 @@ final class MovieRecorderTests: XCTestCase {
         XCTAssertGreaterThan(high, low * 2)
     }
 
+    func testWriterIsReadyBeforeTheFirstFrameWhenTheSizeIsGiven() throws {
+        // Creating the writer takes a moment: when it waits for the first frame, the frames which follow are lost
+        let recorder = MovieRecorder(device: device)
+        try recorder.startWriting(to: folder.appendingPathComponent("ready.mov"), settings: settings(width: 640, height: 360))
+        XCTAssertEqual(recorder.outputSize, CGSize(width: 640, height: 360))
+        finish(recorder, at: 0)
+    }
+
+    func testStartFailsForASizeNoEncoderAccepts() {
+        let recorder = MovieRecorder(device: device)
+        let url = folder.appendingPathComponent("huge.mov")
+        XCTAssertThrowsError(try recorder.startWriting(to: url, settings: settings(width: 100_000, height: 100_000))) {
+            XCTAssertFalse(($0 as NSError).localizedDescription.isEmpty)
+        }
+        XCTAssertFalse(recorder.isRecording)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: url.path))
+    }
+
     func testStartFailsForMissingFolder() {
         let recorder = MovieRecorder(device: device)
         let url = folder.appendingPathComponent("missing/movie.mov")

@@ -25,15 +25,15 @@ final class OSCReceiverTests: XCTestCase {
         let receiver = OSCReceiver()
         let received = expectation(description: "message")
         var message: OSCMessage?
-        XCTAssertTrue(receiver.start(onPort: 19230) {
+        XCTAssertTrue(receiver.start(onPort: 19270) {
             XCTAssertTrue(Thread.isMainThread)
             message = $0
             received.fulfill()
         })
         defer { receiver.stop() }
-        XCTAssertEqual(receiver.port, 19230)
+        XCTAssertEqual(receiver.port, 19270)
 
-        send(OSCMessage(address: "/fps", arguments: [NSNumber(value: Float(25))]), toPort: 19230)
+        send(OSCMessage(address: "/fps", arguments: [NSNumber(value: Float(25))]), toPort: 19270)
 
         wait(for: [received], timeout: 2)
         XCTAssertEqual(message?.address, "/fps")

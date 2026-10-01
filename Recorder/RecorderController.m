@@ -338,6 +338,13 @@ static NSString *StringFrom(NSArray *arguments)
     settings.codec = codec;
     settings.width = self.width;
     settings.height = self.height;
+    if (settings.width == 0 || settings.height == 0)
+    {
+        // The size of the source: tell the recorder now if we know it, so that it is ready for the first frame.
+        // Otherwise it takes the size of the first frame it is given.
+        settings.width = self.sourceWidth;
+        settings.height = self.sourceHeight;
+    }
     settings.framesPerSecond = self.fps;
     settings.megabitsPerSecond = self.bitrate;
 

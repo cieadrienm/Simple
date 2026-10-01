@@ -1,0 +1,7 @@
+{
+  "mcpServers": {
+    "simple-recorder": {
+      "command": "build/Simple Client.app/Contents/MacOS/simple-recorder-mcp"
+    }
+  }
+}
