@@ -33,3 +33,4 @@
 #import "OSCMessage.h"
 #import "OSCReceiver.h"
 #import "OSCQueryServer.h"
+#import "MovieRecorder.h"
