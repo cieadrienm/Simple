@@ -21,3 +21,12 @@ Then open `Simple.xcworkspace`, or build from the command line:
 
     xcodebuild -workspace Simple.xcworkspace -scheme "Simple Client" -configuration Release -destination 'generic/platform=macOS' build
     xcodebuild -workspace Simple.xcworkspace -scheme "Simple Server" -configuration Release -destination 'generic/platform=macOS' build
+
+Checking without looking at the screen
+--------------------------------------
+
+`Tools/build.sh` builds three command line tools into `build/tools`:
+
+- `syphon-probe` lists the Syphon servers which are running, or saves a frame from one of them as a PNG and prints its size and frame rate
+- `view-test` saves what `SimpleImageView` draws for a frame from Simple Server
+- `gl-server` is a minimal OpenGL Syphon server, to compare with frames from Metal
