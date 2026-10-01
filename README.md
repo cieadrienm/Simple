@@ -42,7 +42,8 @@ Simple Client listens for OSC on UDP port **9230** and describes its parameters 
 | `/status/elapsed` | float | read | Seconds recorded |
 | `/status/frames`, `/status/dropped` | int | read | Frames written, and lost because the encoder could not keep up |
 | `/status/file` | string | read | The movie being written, or the last one written |
-| `/status/error` | string | read | The last error. Empty when a recording starts. |
+| `/status/error` | string | read | The last error: a message which was refused, a recording which could not start or failed. Empty when a recording starts. |
+| `/status/failure` | string | read | Why the last recording ended, if it failed or had nothing to write. Empty otherwise. |
 | `/status/source/width`, `/height`, `/fps` | int, int, float | read | What the source delivers |
 
 OSC has no passwords: any machine which can reach Simple Client's port can start and stop recordings and change where they are written. Use it on a network you trust.

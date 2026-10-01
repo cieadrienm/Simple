@@ -75,8 +75,8 @@ NS_ASSUME_NONNULL_BEGIN
 @property (readonly) NSUInteger dropped;          // /status/dropped
 @property (readonly, copy) NSString *file;        // /status/file: being written, or the last one written
 @property (readonly, copy) NSString *error;       // /status/error: the last error, empty when a recording starts
-// Why the last recording ended, if it was not as asked: it failed, or had nothing to write. Empty otherwise, and
-// when a recording starts. Unlike error, a message which was refused meanwhile does not change it.
+// /status/failure: why the last recording ended, if it was not as asked: it failed, or had nothing to write. Empty
+// otherwise, and when a recording starts. Unlike error, a message which was refused meanwhile does not change it.
 @property (readonly, copy) NSString *recordingError;
 @property (readonly) NSInteger sourceWidth;       // /status/source/width, height, fps
 @property (readonly) NSInteger sourceHeight;

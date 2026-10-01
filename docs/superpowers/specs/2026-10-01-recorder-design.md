@@ -76,7 +76,8 @@ new-frame handler.
   first (`applicationShouldTerminate:` replies later).
 - While recording, the app holds an activity assertion so App Nap and idle sleep do not throttle it.
 - The source may be changed, or disappear and come back, while recording: the file simply receives
-  whatever frames arrive.
+  whatever frames arrive. When the source which was chosen (in the menu or by `/source`) goes away, the
+  selection falls back on another; when it is back, it is selected again.
 
 ## Parameters
 
@@ -98,6 +99,7 @@ getter, setter. The window binds to the same properties.
 | `/status/frames`, `/status/dropped` | i | r | |
 | `/status/file` | s | r | file being written, or the last one written |
 | `/status/error` | s | r | last error; cleared when a recording starts |
+| `/status/failure` | s | r | why the last recording ended, if it failed or had nothing to write; a refused message does not change it |
 | `/status/source/width`, `/height`, `/fps` | i, i, f | r | what the source delivers |
 
 Numbers are accepted as int, float, double, or true/false. Settings changed while recording apply to
@@ -127,7 +129,12 @@ ports in use. While recording, the status box shows the elapsed time.
 ## Errors
 
 Starting without a source, an unwritable folder, a writer which fails: the recording stops, the reason
-goes to `/status/error` and to the status box. Nothing is silent.
+goes to `/status/error` and to the status box. Nothing is silent. A refused message is shown for a few
+seconds; why a recording ended (`/status/failure`) stays in the status box until the next recording. A
+movie which has frames is never deleted: after a failure it can be played up to its last fragment.
+
+Added after the review of the branch: `/status/failure`, the return to the chosen source, and the rule
+that a frame for which no picture can be allocated is dropped rather than ending the recording.
 
 ## Tests
 

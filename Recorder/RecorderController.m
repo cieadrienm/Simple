@@ -694,6 +694,8 @@ static NSString *StringFrom(NSArray *arguments)
         [self statusParameter:@"/status/dropped" type:@"i" summary:@"Frames lost because the encoder could not keep up" key:@"dropped"],
         [self statusParameter:@"/status/file" type:@"s" summary:@"The movie being written, or the last one written" key:@"file"],
         [self statusParameter:@"/status/error" type:@"s" summary:@"The last error. Empty when a recording starts." key:@"error"],
+        [self statusParameter:@"/status/failure" type:@"s" summary:@"Why the last recording ended, if it failed or had nothing to write. Empty otherwise."
+                          key:@"recordingError"],
         [self statusParameter:@"/status/source/width" type:@"i" summary:@"Width of the source's frames" key:@"sourceWidth"],
         [self statusParameter:@"/status/source/height" type:@"i" summary:@"Height of the source's frames" key:@"sourceHeight"],
         [self statusParameter:@"/status/source/fps" type:@"f" summary:@"Frames the source delivers each second" key:@"sourceFPS"]

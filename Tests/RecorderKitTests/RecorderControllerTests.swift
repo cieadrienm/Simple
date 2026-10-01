@@ -441,7 +441,8 @@ final class RecorderControllerTests: XCTestCase {
         XCTAssertNotNil((record["CONTENTS"] as? [String: Any])?["toggle"])
 
         let status = try XCTUnwrap((root["status"] as? [String: Any])?["CONTENTS"] as? [String: Any])
-        XCTAssertEqual(Set(status.keys), ["state", "elapsed", "frames", "dropped", "file", "error", "source"])
+        XCTAssertEqual(Set(status.keys), ["state", "elapsed", "frames", "dropped", "file", "error", "failure", "source"])
+        XCTAssertEqual((status["failure"] as? [String: Any])?["VALUE"] as? [String], [""])
         XCTAssertEqual((status["state"] as? [String: Any])?["VALUE"] as? [String], ["idle"])
         XCTAssertEqual((status["state"] as? [String: Any])?["ACCESS"] as? Int, 1)
         for (name, node) in root where name != "status" {

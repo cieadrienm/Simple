@@ -94,6 +94,7 @@ struct Recorder {
             "dropped": value("/status/dropped"),
             "file": value("/status/file"),
             "error": value("/status/error"),
+            "failure": value("/status/failure"),
         ]
     }
 
@@ -259,14 +260,13 @@ struct Recorder {
         if try currentState().state == "idle" {
             throw RecorderError.failed("There is no recording in progress.\n" + json(try status()))
         }
-        // A message refused during the recording leaves its error: it is not why the recording stopped
-        let errorBefore = try currentState().error
         send("/record", [.int(0)])
         let finished = try wait(upTo: 30) { try currentState().state == "idle" }
         let result = try status()
         if !finished { throw RecorderError.failed("The movie is still being finished.\n" + json(result)) }
-        if let error = result["error"] as? String, !error.isEmpty, error != errorBefore {
-            throw RecorderError.failed("The recording stopped with an error: \(error)\n" + json(result))
+        // failure, not error: a message refused during the recording leaves its error, and is not why it stopped
+        if let failure = result["failure"] as? String, !failure.isEmpty {
+            throw RecorderError.failed("The recording stopped with an error: \(failure)\n" + json(result))
         }
         return result
     }
@@ -298,7 +298,8 @@ let tools: [[String: Any]] = [
     ["name": "recorder_status",
      "description": "The state of Simple Client's recorder: the Syphon sources available and the one selected, the size and frame rate of its frames, "
         + "the settings, and whether it is recording (state: idle | recording | finishing), for how long, how many frames were written and dropped, "
-        + "the movie being written or last written, and the last error.",
+        + "the movie being written or last written, the last error (error: a refused message, a recording which could not start), "
+        + "and why the last recording ended if it failed (failure).",
      "inputSchema": schema([:])],
     ["name": "recorder_configure",
      "description": "Changes the recorder's settings; only those given change. They are saved by the app and apply to the next recording, "
