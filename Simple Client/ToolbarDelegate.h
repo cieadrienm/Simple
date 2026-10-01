@@ -28,6 +28,13 @@
  */
 
 #import <Cocoa/Cocoa.h>
+#import "RecorderController.h"
 
 @interface ToolbarDelegate : NSObject <NSToolbarDelegate>
+// What the record and settings items act on
+@property (nonatomic, strong) RecorderController *recorder;
+// The recorder's settings, once they have been shown
+@property (readonly) NSPopover *settingsPopover;
+// Starts recording, or stops
+- (IBAction)toggleRecording:(id)sender;
 @end

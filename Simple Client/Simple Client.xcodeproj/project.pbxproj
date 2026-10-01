@@ -25,6 +25,7 @@
 		785D93C8561E9A14996CE8ED /* OSCQueryServer.m in Sources */ = {isa = PBXBuildFile; fileRef = 42136AF224EA37724882D866 /* OSCQueryServer.m */; };
 		822E55CA904F23D0C5B6841F /* MovieRecorder.m in Sources */ = {isa = PBXBuildFile; fileRef = 6B2C9B3BD510ECB3CE0A1742 /* MovieRecorder.m */; };
 		C31FD4839C923C6EE0FCCF35 /* RecorderController.m in Sources */ = {isa = PBXBuildFile; fileRef = F8D05627EE5B053674732F58 /* RecorderController.m */; };
+		9CBB37BA71B3A88A36D61401 /* RecorderSettingsViewController.m in Sources */ = {isa = PBXBuildFile; fileRef = FB4C911F2275F26008437A7E /* RecorderSettingsViewController.m */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -88,6 +89,8 @@
 		6B2C9B3BD510ECB3CE0A1742 /* MovieRecorder.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; name = MovieRecorder.m; path = ../Recorder/MovieRecorder.m; sourceTree = "<group>"; };
 		D31CDAE973F5960DD4725DFD /* RecorderController.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; name = RecorderController.h; path = ../Recorder/RecorderController.h; sourceTree = "<group>"; };
 		F8D05627EE5B053674732F58 /* RecorderController.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; name = RecorderController.m; path = ../Recorder/RecorderController.m; sourceTree = "<group>"; };
+		DA7BFD6150F4C7A343432B59 /* RecorderSettingsViewController.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = RecorderSettingsViewController.h; sourceTree = "<group>"; };
+		FB4C911F2275F26008437A7E /* RecorderSettingsViewController.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = RecorderSettingsViewController.m; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -110,6 +113,8 @@
 				256AC3D90F4B6AC300CF3369 /* SimpleClientAppDelegate.m */,
 				E2D0981C18DD04F400DE623B /* SimpleImageView.h */,
 				E2D0981D18DD04F400DE623B /* SimpleImageView.m */,
+				DA7BFD6150F4C7A343432B59 /* RecorderSettingsViewController.h */,
+				FB4C911F2275F26008437A7E /* RecorderSettingsViewController.m */,
 				BDC63CD913AFDF070097BBAD /* ToolbarDelegate.h */,
 				BDC63CDA13AFDF070097BBAD /* ToolbarDelegate.m */,
 				BDC63CEC13AFFE830097BBAD /* ServerDescriptionValueTransformer.h */,
@@ -294,6 +299,7 @@
 				BDC63CDB13AFDF070097BBAD /* ToolbarDelegate.m in Sources */,
 				BDC63CEE13AFFE830097BBAD /* ServerDescriptionValueTransformer.m in Sources */,
 				E2D0981E18DD04F400DE623B /* SimpleImageView.m in Sources */,
+				9CBB37BA71B3A88A36D61401 /* RecorderSettingsViewController.m in Sources */,
 				1B62659151FFFAF25427F5D7 /* FramePacer.m in Sources */,
 				FC39C9EBB2E14A6801FD2773 /* OSCMessage.m in Sources */,
 				443F214182E01E3D55294532 /* OSCReceiver.m in Sources */,

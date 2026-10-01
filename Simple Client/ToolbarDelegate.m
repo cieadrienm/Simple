@@ -28,24 +28,102 @@
  */
 
 #import "ToolbarDelegate.h"
+#import "RecorderSettingsViewController.h"
 
 static NSString * const kStatusItemIdentifier = @"StatusItemIdentifier";
 static NSString * const kServersMenuItemIdentifier = @"ServersMenuItemIdentifier";
+static NSString * const kRecordItemIdentifier = @"RecordItemIdentifier";
+static NSString * const kSettingsItemIdentifier = @"SettingsItemIdentifier";
+
+static void *RecorderStateContext = &RecorderStateContext;
+
+@interface ToolbarDelegate ()
+@property (readwrite) NSPopover *settingsPopover;
+@end
 
 @implementation ToolbarDelegate  {
     IBOutlet NSPopUpButton  *availableServersMenu;
     IBOutlet NSBox *statusBox;
+    NSToolbarItem *recordItem;
+}
+
+- (void)dealloc
+{
+    [_recorder removeObserver:self forKeyPath:@"state" context:RecorderStateContext];
 }
 
 - (NSArray *)toolbarDefaultItemIdentifiers:(NSToolbar *)toolbar
 {
-    return @[kStatusItemIdentifier, NSToolbarFlexibleSpaceItemIdentifier, kServersMenuItemIdentifier];
+    return @[kRecordItemIdentifier, kSettingsItemIdentifier, kStatusItemIdentifier, NSToolbarFlexibleSpaceItemIdentifier, kServersMenuItemIdentifier];
 }
 
 - (NSArray *)toolbarAllowedItemIdentifiers:(NSToolbar *)toolbar
 {
-    return @[kServersMenuItemIdentifier, NSToolbarFlexibleSpaceItemIdentifier, kStatusItemIdentifier];
+    return @[kServersMenuItemIdentifier, NSToolbarFlexibleSpaceItemIdentifier, kStatusItemIdentifier, kRecordItemIdentifier, kSettingsItemIdentifier];
 }
+
+#pragma mark Recorder
+
+- (void)setRecorder:(RecorderController *)recorder
+{
+    [_recorder removeObserver:self forKeyPath:@"state" context:RecorderStateContext];
+    _recorder = recorder;
+    [_recorder addObserver:self forKeyPath:@"state" options:0 context:RecorderStateContext];
+    [self showRecorderState];
+}
+
+- (void)observeValueForKeyPath:(NSString *)keyPath ofObject:(id)object change:(NSDictionary *)change context:(void *)context
+{
+    if (context == RecorderStateContext)
+    {
+        [self showRecorderState];
+    }
+    else
+    {
+        [super observeValueForKeyPath:keyPath ofObject:object change:change context:context];
+    }
+}
+
+// The record item starts a recording, or stops the one in progress
+- (void)showRecorderState
+{
+    BOOL recording = self.recorder.recording;
+    NSImage *image = [NSImage imageWithSystemSymbolName:(recording ? @"stop.circle.fill" : @"record.circle")
+                               accessibilityDescription:(recording ? @"Stop" : @"Record")];
+    recordItem.image = [image imageWithSymbolConfiguration:[NSImageSymbolConfiguration configurationWithPaletteColors:@[[NSColor systemRedColor]]]];
+    recordItem.label = recording ? @"Stop" : @"Record";
+    recordItem.toolTip = recording ? @"Stop recording and finish the movie" : @"Record the source to a movie";
+}
+
+- (IBAction)toggleRecording:(id)sender
+{
+    [self.recorder toggle];
+}
+
+- (IBAction)showSettings:(NSButton *)sender
+{
+    if (self.recorder == nil)
+    {
+        return;
+    }
+    if (self.settingsPopover == nil)
+    {
+        NSPopover *popover = [[NSPopover alloc] init];
+        popover.behavior = NSPopoverBehaviorSemitransient;
+        popover.contentViewController = [[RecorderSettingsViewController alloc] initWithRecorder:self.recorder];
+        self.settingsPopover = popover;
+    }
+    if (self.settingsPopover.shown)
+    {
+        [self.settingsPopover close];
+    }
+    else
+    {
+        [self.settingsPopover showRelativeToRect:sender.bounds ofView:sender preferredEdge:NSRectEdgeMaxY];
+    }
+}
+
+#pragma mark Items
 
 - (NSToolbarItem *)toolbar:(NSToolbar *)toolbar itemForItemIdentifier:(NSString *)itemIdentifier willBeInsertedIntoToolbar:(BOOL)flag
 {
@@ -67,6 +145,27 @@ static NSString * const kServersMenuItemIdentifier = @"ServersMenuItemIdentifier
         [item setToolTip:@"Status"];
         [statusBox setCornerRadius:4.0];
         [item setView:statusBox];
+    }
+    else if ([itemIdentifier isEqualToString:kRecordItemIdentifier])
+    {
+        [item setPaletteLabel:@"Record"];
+        [item setBordered:YES];
+        [item setTarget:self];
+        [item setAction:@selector(toggleRecording:)];
+        recordItem = item;
+        [self showRecorderState];
+    }
+    else if ([itemIdentifier isEqualToString:kSettingsItemIdentifier])
+    {
+        // A button, for the popover to point at
+        NSButton *button = [NSButton buttonWithImage:[NSImage imageWithSystemSymbolName:@"gearshape" accessibilityDescription:@"Settings"]
+                                              target:self
+                                              action:@selector(showSettings:)];
+        [button setBezelStyle:NSBezelStyleTexturedRounded];
+        [item setLabel:@"Settings"];
+        [item setPaletteLabel:@"Settings"];
+        [item setToolTip:@"Codec, size, frame rate, bitrate and folder of the movies recorded"];
+        [item setView:button];
     }
     else
     {

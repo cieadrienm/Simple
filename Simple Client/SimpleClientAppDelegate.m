@@ -29,6 +29,7 @@
 
 #import "SimpleClientAppDelegate.h"
 #import "ServerDescriptionValueTransformer.h"
+#import "ToolbarDelegate.h"
 
 // The ports we listen on unless the environment says otherwise, which lets a second copy run beside the first
 static const NSInteger kDefaultOSCPort = 9230;
@@ -114,6 +115,18 @@ static void *ServersContext = &ServersContext;
     [self.recorder addObserver:self forKeyPath:@"error" options:0 context:RecorderErrorContext];
     [availableServersController addObserver:self forKeyPath:@"arrangedObjects" options:0 context:ServersContext];
 
+    // The toolbar's record and settings items, and File > Start Recording
+    ToolbarDelegate *toolbarDelegate = (ToolbarDelegate *)self.view.window.toolbar.delegate;
+    if ([toolbarDelegate isKindOfClass:[ToolbarDelegate class]])
+    {
+        toolbarDelegate.recorder = self.recorder;
+    }
+    NSMenu *fileMenu = [[[NSApp mainMenu] itemWithTitle:@"File"] submenu];
+    NSMenuItem *recordItem = [[NSMenuItem alloc] initWithTitle:@"Start Recording" action:@selector(toggleRecording:) keyEquivalent:@"r"];
+    recordItem.target = self;
+    [fileMenu insertItem:recordItem atIndex:0];
+    [fileMenu insertItem:[NSMenuItem separatorItem] atIndex:1];
+
     NSDictionary<NSString *, NSString *> *environment = [[NSProcessInfo processInfo] environment];
     NSInteger oscPort = [environment[@"SIMPLE_OSC_PORT"] integerValue] ?: kDefaultOSCPort;
     NSInteger queryPort = [environment[@"SIMPLE_OSCQUERY_PORT"] integerValue] ?: kDefaultOSCQueryPort;
@@ -158,6 +171,20 @@ static void *ServersContext = &ServersContext;
     {
         [super observeValueForKeyPath:keyPath ofObject:object change:change context:context];
     }
+}
+
+- (IBAction)toggleRecording:(id)sender
+{
+    [self.recorder toggle];
+}
+
+- (BOOL)validateMenuItem:(NSMenuItem *)menuItem
+{
+    if (menuItem.action == @selector(toggleRecording:))
+    {
+        menuItem.title = self.recorder.recording ? @"Stop Recording" : @"Start Recording";
+    }
+    return YES;
 }
 
 - (NSApplicationTerminateReply)applicationShouldTerminate:(NSApplication *)sender

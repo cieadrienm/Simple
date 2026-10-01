@@ -10,5 +10,7 @@ COMMON="-fobjc-arc -F $FRAMEWORKS -framework Syphon -framework Cocoa -framework 
 clang $COMMON -framework IOSurface Tools/syphon-probe.m -o "$OUT/syphon-probe"
 clang $COMMON -framework OpenGL Tools/gl-server.m -o "$OUT/gl-server"
 clang $COMMON -I Common -framework MetalKit -framework QuartzCore Tools/view-test.m Common/SimpleImageView.m -o "$OUT/view-test"
+clang -fobjc-arc -I Recorder -I "Simple Client" -framework Cocoa -framework Metal -framework AVFoundation -framework CoreVideo -framework CoreMedia -framework QuartzCore \
+    Tools/settings-test.m "Simple Client/RecorderSettingsViewController.m" "Simple Client/ToolbarDelegate.m" Recorder/*.m -o "$OUT/settings-test"
 swiftc -O Tools/movie-info.swift -o "$OUT/movie-info"
 echo "built: $OUT"

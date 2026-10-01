@@ -33,7 +33,7 @@
 #import "SimpleImageView.h"
 #import "RecorderController.h"
 
-@interface SimpleClientAppDelegate : NSObject <NSApplicationDelegate, NSWindowDelegate, RecorderSourceProvider>
+@interface SimpleClientAppDelegate : NSObject <NSApplicationDelegate, NSWindowDelegate, NSMenuItemValidation, RecorderSourceProvider>
 @property (weak) IBOutlet SimpleImageView *view;
 // Records the frames of the selected server
 @property (readonly, strong) RecorderController *recorder;
