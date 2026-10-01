@@ -75,6 +75,9 @@ NS_ASSUME_NONNULL_BEGIN
 @property (readonly) NSUInteger dropped;          // /status/dropped
 @property (readonly, copy) NSString *file;        // /status/file: being written, or the last one written
 @property (readonly, copy) NSString *error;       // /status/error: the last error, empty when a recording starts
+// Why the last recording ended, if it was not as asked: it failed, or had nothing to write. Empty otherwise, and
+// when a recording starts. Unlike error, a message which was refused meanwhile does not change it.
+@property (readonly, copy) NSString *recordingError;
 @property (readonly) NSInteger sourceWidth;       // /status/source/width, height, fps
 @property (readonly) NSInteger sourceHeight;
 @property (readonly) double sourceFPS;
@@ -88,9 +91,11 @@ NS_ASSUME_NONNULL_BEGIN
 // Selects the source with this title or, failing that, the first whose title contains it, whatever the case.
 // Returns NO, with the reason in error, if there is no such source.
 - (BOOL)selectSourceMatching:(NSString *)title;
-// Tell the recorder when the sources available change, and when another is selected
+// Tell the recorder when the sources available change, and when another is selected.
+// chosen: the user selected the source. NO when the selection moved by itself because the selected source went
+// away: the recorder then selects the source which was chosen again when it comes back.
 - (void)sourcesDidChange;
-- (void)sourceSelectionDidChange;
+- (void)sourceSelectionDidChange:(BOOL)chosen;
 // Give the recorder every frame of the selected source. Can be called from any thread.
 - (void)frameReceived:(id<MTLTexture>)frame;
 

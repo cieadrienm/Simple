@@ -61,7 +61,7 @@ static void *ServersContext = &ServersContext;
 + (NSSet *)keyPathsForValuesAffectingStatus
 {
     return [NSSet setWithObjects:@"frameWidth", @"frameHeight", @"FPS", @"selectedServerDescriptions", @"view.error",
-            @"recorder.state", @"recorder.elapsed", @"recentError", nil];
+            @"recorder.state", @"recorder.elapsed", @"recorder.recordingError", @"recentError", nil];
 }
 
 - (NSString *)status
@@ -73,6 +73,11 @@ static void *ServersContext = &ServersContext;
     else if (self.recentError.length > 0)
     {
         return self.recentError;
+    }
+    else if (self.recorder.recordingError.length > 0)
+    {
+        // Why the last recording stopped stays until another is started: it must not be missed
+        return self.recorder.recordingError;
     }
 
     NSString *source = @"--";
@@ -244,11 +249,26 @@ static void *ServersContext = &ServersContext;
         BOOL uuidChange = newUUID && ![currentUUID isEqualToString:newUUID];
         selectedServerDescriptions = descriptions;
 
+        // Was another server chosen, or did the selection move because the server we had has gone?
+        BOOL chosen = YES;
+        if (currentUUID)
+        {
+            chosen = NO;
+            for (NSDictionary *description in [[SyphonServerDirectory sharedDirectory] servers])
+            {
+                if ([description[SyphonServerDescriptionUUIDKey] isEqualToString:currentUUID])
+                {
+                    chosen = YES;
+                }
+            }
+        }
+
         if (!newUUID || !currentUUID || uuidChange)
         {
             // Stop our current client
             [syClient stop];
-            [self.recorder sourceSelectionDidChange];
+            // The recorder returns to a server which was chosen when it comes back
+            [self.recorder sourceSelectionDidChange:chosen];
             // Reset our terrible FPS display
             fpsStart = [NSDate timeIntervalSinceReferenceDate];
             fpsCount = 0;

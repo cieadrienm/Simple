@@ -98,6 +98,7 @@ static NSString *StringFrom(NSArray *arguments)
 @property (readwrite, copy) NSString *state;
 @property (readwrite, copy) NSString *file;
 @property (readwrite, copy) NSString *error;
+@property (readwrite, copy) NSString *recordingError;
 @property (readwrite) NSInteger oscPort;
 @property (readwrite) NSInteger oscQueryPort;
 @end
@@ -114,6 +115,8 @@ static NSString *StringFrom(NSArray *arguments)
     id<NSObject> _activity;
     NSTimeInterval _startTime;
     NSTimeInterval _lastElapsed;
+    // The title of the source the user selected, which the selection returns to
+    NSString *_chosenSourceTitle;
     NSMutableArray<void (^)(void)> *_stopHandlers;
 
     // Guards what -frameReceived: updates
@@ -155,6 +158,7 @@ static NSString *StringFrom(NSArray *arguments)
         _state = kStateIdle;
         _file = @"";
         _error = @"";
+        _recordingError = @"";
         _stopHandlers = [NSMutableArray array];
 
         NSString *movies = NSSearchPathForDirectoriesInDomains(NSMoviesDirectory, NSUserDomainMask, YES).firstObject;
@@ -325,6 +329,7 @@ static NSString *StringFrom(NSArray *arguments)
         return [self.state isEqualToString:kStateRecording] ? YES : [self failWithError:@"The previous recording is still being finished"];
     }
     self.error = @"";
+    self.recordingError = @"";
 
     id<RecorderSourceProvider> provider = _provider;
     if ([provider selectedSourceTitle] == nil)
@@ -435,6 +440,7 @@ static NSString *StringFrom(NSArray *arguments)
     if (error)
     {
         self.error = error.localizedDescription;
+        self.recordingError = error.localizedDescription;
         if (![[NSFileManager defaultManager] fileExistsAtPath:self.file])
         {
             self.file = @"";
@@ -489,12 +495,25 @@ static NSString *StringFrom(NSArray *arguments)
     {
         return [self failWithError:[NSString stringWithFormat:@"There is no source called \u201C%@\u201D", title]];
     }
+    _chosenSourceTitle = [titles[index] copy];
     [provider selectSourceAtIndex:index];
     return YES;
 }
 
 - (void)sourcesDidChange
 {
+    // If the source which was chosen went away (its application quit, or crashed) and is back, return to it:
+    // a recording must not carry on with whichever source took its place
+    id<RecorderSourceProvider> provider = _provider;
+    if (_chosenSourceTitle && ![_chosenSourceTitle isEqualToString:[provider selectedSourceTitle]])
+    {
+        NSUInteger index = [[provider sourceTitles] indexOfObject:_chosenSourceTitle];
+        if (index != NSNotFound)
+        {
+            [provider selectSourceAtIndex:index];
+        }
+    }
+
     // The sources available are the values /source can take
     if (_queryServerStarted)
     {
@@ -502,8 +521,13 @@ static NSString *StringFrom(NSArray *arguments)
     }
 }
 
-- (void)sourceSelectionDidChange
+- (void)sourceSelectionDidChange:(BOOL)chosen
 {
+    if (chosen || _chosenSourceTitle == nil)
+    {
+        _chosenSourceTitle = [[_provider selectedSourceTitle] copy];
+    }
+
     os_unfair_lock_lock(&_lock);
     _frameWidth = 0;
     _frameHeight = 0;

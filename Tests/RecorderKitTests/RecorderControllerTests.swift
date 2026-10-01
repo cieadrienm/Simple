@@ -317,6 +317,89 @@ final class RecorderControllerTests: XCTestCase {
         wait(for: [stopped], timeout: 20)
     }
 
+    func testAMessageRefusedWhileRecordingIsNotWhyTheRecordingEnded() {
+        XCTAssertTrue(controller.start())
+        deliverFrames(for: 0.2)
+        send("/codec", "hap")
+        XCTAssertFalse(controller.error.isEmpty)
+        controller.stop(completionHandler: nil)
+        waitForState("idle")
+
+        XCTAssertEqual(controller.recordingError, "", "the movie was written as asked")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: controller.file))
+    }
+
+    func testWhyARecordingEndedIsKeptUntilTheNextOne() {
+        XCTAssertTrue(controller.start())
+        controller.stop(completionHandler: nil)
+        waitForState("idle")
+        XCTAssertFalse(controller.recordingError.isEmpty, "no frame was received")
+
+        send("/fps", NSNumber(value: 25))
+        XCTAssertFalse(controller.recordingError.isEmpty)
+
+        XCTAssertTrue(controller.start())
+        XCTAssertEqual(controller.recordingError, "")
+        deliverFrames(for: 0.2)
+        controller.stop(completionHandler: nil)
+        waitForState("idle")
+        XCTAssertEqual(controller.recordingError, "")
+    }
+
+    // MARK: A source which goes away
+
+    func testTheSourceChosenIsSelectedAgainWhenItComesBack() {
+        sources.selected = 2
+        controller.sourceSelectionDidChange(true)
+
+        // Simple Server quits: the menu falls back on another server
+        sources.titles = ["main view - eMotion"]
+        sources.applications = ["eMotion"]
+        sources.selected = 0
+        controller.sourceSelectionDidChange(false)
+        controller.sourcesDidChange()
+        XCTAssertEqual(sources.selections, [])
+
+        // It is launched again
+        sources.titles = ["main view - eMotion", "Simple Server"]
+        sources.applications = ["eMotion", "Simple Server"]
+        controller.sourcesDidChange()
+        XCTAssertEqual(sources.selections, [1])
+    }
+
+    func testASourceChosenWhileTheFirstIsAwayIsKept() {
+        sources.selected = 2
+        controller.sourceSelectionDidChange(true)
+        sources.titles = ["main view - eMotion", "Map - AMKinectTrack"]
+        sources.applications = ["eMotion", "AMKinectTrack"]
+        sources.selected = 0
+        controller.sourceSelectionDidChange(false)
+
+        // The user picks another source rather than wait
+        sources.selected = 1
+        controller.sourceSelectionDidChange(true)
+
+        sources.titles = ["main view - eMotion", "Map - AMKinectTrack", "Simple Server"]
+        sources.applications = ["eMotion", "AMKinectTrack", "Simple Server"]
+        controller.sourcesDidChange()
+        XCTAssertEqual(sources.selections, [], "the user's choice stands")
+    }
+
+    func testASourceSelectedByOSCIsTheOneToComeBackTo() {
+        send("/source", "main view")
+        XCTAssertEqual(sources.selections, [0])
+        controller.sourceSelectionDidChange(true)
+
+        sources.titles = ["Simple Server"]
+        sources.applications = ["Simple Server"]
+        sources.selected = 0
+        controller.sourceSelectionDidChange(false)
+        sources.titles = ["Simple Server", "main view - eMotion"]
+        sources.applications = ["Simple Server", "eMotion"]
+        controller.sourcesDidChange()
+        XCTAssertEqual(sources.selections, [0, 1])
+    }
+
     // MARK: OSCQuery
 
     private func get(_ path: String) -> [String: Any] {

@@ -19,7 +19,9 @@ Choose a source in the toolbar, then press the record button (or File ▸ Start 
 - **Bitrate**: megabits per second for H.264 and HEVC, or automatic. ProRes has none to choose.
 - **Folder** and **Name**. An existing movie is never overwritten: a number is added to the name.
 
-Frames are scaled and encoded on the GPU, away from the main thread. If the encoder cannot keep up frames are dropped, and counted, rather than delaying anything. Quitting, closing the window or `kill` while recording finishes the movie first. The source can be changed while recording.
+Frames are scaled and encoded on the GPU, away from the main thread. If the encoder cannot keep up frames are dropped, and counted, rather than delaying anything. Quitting, closing the window or `kill` while recording finishes the movie first. If writing fails (a full disk, for instance) the recording stops, the reason stays in the window until the next recording, and what was written is kept.
+
+The source can be changed while recording. If the source's application quits, the movie holds its last frame; when it is back, Simple Client returns to it.
 
 OSC and OSCQuery
 ----------------
@@ -42,6 +44,8 @@ Simple Client listens for OSC on UDP port **9230** and describes its parameters 
 | `/status/file` | string | read | The movie being written, or the last one written |
 | `/status/error` | string | read | The last error. Empty when a recording starts. |
 | `/status/source/width`, `/height`, `/fps` | int, int, float | read | What the source delivers |
+
+OSC has no passwords: any machine which can reach Simple Client's port can start and stop recordings and change where they are written. Use it on a network you trust.
 
 Numbers are accepted as int or float. Settings are saved, and apply to the next recording. A message which cannot be applied is reported in `/status/error` and, for a few seconds, in the window.
 

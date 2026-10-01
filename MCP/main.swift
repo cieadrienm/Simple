@@ -237,14 +237,14 @@ struct Recorder {
             throw RecorderError.failed("Not started: some settings were not taken as given.\n" + json(result))
         }
 
+        // /status/error is the last error, whatever caused it: only one which appears now is this start's
+        let errorBefore = try currentState().error
         send("/record", [.int(1)])
-        let sent = Date()
         var failure: String?
         let started = try wait(upTo: 3) {
             let (state, error) = try currentState()
             if state == "recording" { return true }
-            // The recorder empties its error when it tries to start: once it has had time to, an error is this start's
-            if Date().timeIntervalSince(sent) > 0.4, !error.isEmpty {
+            if !error.isEmpty, error != errorBefore {
                 failure = error
                 return true
             }
@@ -259,11 +259,13 @@ struct Recorder {
         if try currentState().state == "idle" {
             throw RecorderError.failed("There is no recording in progress.\n" + json(try status()))
         }
+        // A message refused during the recording leaves its error: it is not why the recording stopped
+        let errorBefore = try currentState().error
         send("/record", [.int(0)])
         let finished = try wait(upTo: 30) { try currentState().state == "idle" }
         let result = try status()
         if !finished { throw RecorderError.failed("The movie is still being finished.\n" + json(result)) }
-        if let error = result["error"] as? String, !error.isEmpty {
+        if let error = result["error"] as? String, !error.isEmpty, error != errorBefore {
             throw RecorderError.failed("The recording stopped with an error: \(error)\n" + json(result))
         }
         return result

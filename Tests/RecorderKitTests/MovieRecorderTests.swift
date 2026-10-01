@@ -328,6 +328,78 @@ final class MovieRecorderTests: XCTestCase {
         finish(recorder, at: 0)
     }
 
+    func testStartWhileThePreviousMovieIsBeingFinishedFails() throws {
+        let texture = makeTexture(width: 640, height: 360)
+        let recorder = MovieRecorder(device: device)
+        try recorder.startWriting(to: folder.appendingPathComponent("first.mov"), settings: settings())
+        for index in 0..<10 { append(texture, to: recorder, at: Double(index) / 30) }
+
+        let finished = expectation(description: "finished")
+        recorder.finish(atTime: 10.0 / 30) { error in
+            XCTAssertNil(error)
+            finished.fulfill()
+        }
+        // The first movie is not finished yet: a second cannot take its place
+        XCTAssertThrowsError(try recorder.startWriting(to: folder.appendingPathComponent("second.mov"), settings: settings()))
+        wait(for: [finished], timeout: 20)
+
+        XCTAssertEqual(try sampleCount(folder.appendingPathComponent("first.mov")), 10)
+        // Once it is, the recorder can be used again
+        try recorder.startWriting(to: folder.appendingPathComponent("second.mov"), settings: settings())
+        for index in 0..<5 { append(texture, to: recorder, at: 50 + Double(index) / 30) }
+        XCTAssertNil(finish(recorder, at: 50 + 5.0 / 30))
+        XCTAssertEqual(try sampleCount(folder.appendingPathComponent("second.mov")), 5)
+    }
+
+    func testADiskWhichFillsUpIsReportedAsSuchAndTheMovieIsKept() throws {
+        // A small disk of its own, which the movie fills
+        let image = folder.appendingPathComponent("small.dmg")
+        let volume = folder.appendingPathComponent("volume")
+        try FileManager.default.createDirectory(at: volume, withIntermediateDirectories: true)
+        func hdiutil(_ arguments: [String]) throws {
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/hdiutil")
+            process.arguments = arguments
+            process.standardOutput = FileHandle.nullDevice
+            process.standardError = FileHandle.nullDevice
+            try process.run()
+            process.waitUntilExit()
+            try XCTSkipIf(process.terminationStatus != 0, "hdiutil \(arguments.first ?? "") failed")
+        }
+        try hdiutil(["create", "-size", "12m", "-fs", "HFS+", "-volname", "RecorderTest", image.path])
+        try hdiutil(["attach", "-nobrowse", "-mountpoint", volume.path, image.path])
+        defer { try? hdiutil(["detach", "-force", volume.path]) }
+
+        let url = volume.appendingPathComponent("full.mov")
+        let recorder = MovieRecorder(device: device)
+        let failed = expectation(description: "failed")
+        var failure: Error?
+        recorder.failureHandler = {
+            failure = $0
+            failed.fulfill()
+        }
+        try recorder.startWriting(to: url, settings: settings(.proRes4444))
+        // Noise does not compress: twenty frames of ProRes 4444 are more than 12 MB. Opaque noise: the encoder
+        // itself fails on noise whose transparency is random too, which no real picture is.
+        let texture = makeTexture(width: 1280, height: 720)
+        var noise = [UInt8](repeating: 0, count: 1280 * 720 * 4)
+        for index in 0..<600 where recorder.isRecording {
+            arc4random_buf(&noise, noise.count)
+            for alpha in stride(from: 3, to: noise.count, by: 4) { noise[alpha] = 255 }
+            texture.replace(region: MTLRegionMake2D(0, 0, 1280, 720), mipmapLevel: 0, withBytes: noise, bytesPerRow: 1280 * 4)
+            append(texture, to: recorder, at: Double(index) / 30)
+        }
+        wait(for: [failed], timeout: 20)
+
+        XCTAssertFalse(recorder.isRecording)
+        let error = try XCTUnwrap(failure) as NSError
+        let underlying = error.userInfo[NSUnderlyingErrorKey] as? NSError
+        XCTAssertTrue(error.code == AVError.diskFull.rawValue || underlying?.code == Int(ENOSPC),
+                      "the reason given is \(error.localizedDescription) (\(error.domain) \(error.code)) \(error.userInfo)")
+        XCTAssertGreaterThan(recorder.framesWritten, 0)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: url.path), "what was written is kept")
+    }
+
     func testFinishWithoutFramesLeavesNoFile() throws {
         let url = folder.appendingPathComponent("empty.mov")
         let recorder = MovieRecorder(device: device)

@@ -122,6 +122,8 @@ static NSError *RecorderError(NSString *description)
     // Guards what follows, which is used from the threads frames arrive on
     os_unfair_lock _lock;
     BOOL _recording;
+    // From the end of a recording until its last frames have left and its file is finished: no other can start
+    BOOL _finishing;
     FramePacer *_pacer;
     BOOL _hasFirstFrame;
     NSTimeInterval _firstFrameTime;
@@ -220,9 +222,16 @@ static NSError *RecorderError(NSString *description)
     NSFileManager *fileManager = [NSFileManager defaultManager];
     NSString *folder = url.URLByDeletingLastPathComponent.path;
     BOOL isFolder = NO;
-    if (self.recording)
+    os_unfair_lock_lock(&_lock);
+    BOOL recording = _recording, finishing = _finishing;
+    os_unfair_lock_unlock(&_lock);
+    if (recording)
     {
         problem = @"A recording is already in progress";
+    }
+    else if (finishing)
+    {
+        problem = @"The previous movie is still being finished";
     }
     else if (![fileManager fileExistsAtPath:folder isDirectory:&isFolder] || !isFolder)
     {
@@ -245,7 +254,6 @@ static NSError *RecorderError(NSString *description)
         return NO;
     }
 
-    // The previous recording, if any, has left the queue by the time this runs
     os_unfair_lock_lock(&_lock);
     _outputSize = NSZeroSize;
     os_unfair_lock_unlock(&_lock);
@@ -479,6 +487,15 @@ static NSError *RecorderError(NSString *description)
         }
     }
 
+    if (_writer.status == AVAssetWriterStatusFailed)
+    {
+        // A full disk, for instance. Say so now: a failed writer has no pictures to give either, and that
+        // would be reported instead.
+        [self frameDoneWritten:NO];
+        [self failWithError:_writer.error ?: RecorderError(@"The movie could not be written")];
+        return;
+    }
+
     CVPixelBufferRef pixelBuffer = NULL;
     CVMetalTextureRef target = NULL;
     CVPixelBufferPoolRef pool = _adaptor.pixelBufferPool;
@@ -496,9 +513,8 @@ static NSError *RecorderError(NSString *description)
     {
         if (target) CFRelease(target);
         if (pixelBuffer) CVPixelBufferRelease(pixelBuffer);
+        // Memory is short: this frame is lost. The movie goes on, as ending it here would lose what follows too.
         [self frameDoneWritten:NO];
-        // Not a frame lost for want of time: nothing more can be written
-        [self failWithError:RecorderError(@"The movie could not be written: no picture could be allocated")];
         return;
     }
 
@@ -578,15 +594,30 @@ static NSError *RecorderError(NSString *description)
     os_unfair_lock_lock(&_lock);
     BOOL wasRecording = _recording;
     _recording = NO;
+    if (wasRecording)
+    {
+        _finishing = YES;
+    }
     os_unfair_lock_unlock(&_lock);
     if (!wasRecording)
     {
         return;
     }
-    [_writer cancelWriting];
+    // Cancelling deletes the file: only if nothing was written to it. A writer which failed keeps its file,
+    // which can be played up to its last fragment.
+    if (!CMTIME_IS_VALID(_lastTime))
+    {
+        [_writer cancelWriting];
+    }
     _writer = nil;
     _input = nil;
     _adaptor = nil;
+    // Frames still on their way belong to this recording: another can start once they have left
+    dispatch_group_notify(_framesInFlight, _queue, ^{
+        os_unfair_lock_lock(&self->_lock);
+        self->_finishing = NO;
+        os_unfair_lock_unlock(&self->_lock);
+    });
     dispatch_async(dispatch_get_main_queue(), ^{
         if (self.failureHandler)
         {
@@ -602,8 +633,30 @@ static NSError *RecorderError(NSString *description)
     os_unfair_lock_lock(&_lock);
     BOOL wasRecording = _recording;
     _recording = NO;
+    if (wasRecording)
+    {
+        _finishing = YES;
+    }
     NSTimeInterval elapsed = _hasFirstFrame ? time - _firstFrameTime : 0.0;
     os_unfair_lock_unlock(&_lock);
+
+    if (!wasRecording)
+    {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            handler(RecorderError(@"There is no recording in progress"));
+        });
+        return;
+    }
+
+    // The recorder can be used again, and our owner is told
+    void (^finished)(NSError *) = ^(NSError *error) {
+        os_unfair_lock_lock(&self->_lock);
+        self->_finishing = NO;
+        os_unfair_lock_unlock(&self->_lock);
+        dispatch_async(dispatch_get_main_queue(), ^{
+            handler(error);
+        });
+    };
 
     dispatch_group_notify(_framesInFlight, _queue, ^{
         AVAssetWriter *writer = self->_writer;
@@ -612,19 +665,10 @@ static NSError *RecorderError(NSString *description)
         self->_input = nil;
         self->_adaptor = nil;
 
-        if (!wasRecording)
-        {
-            dispatch_async(dispatch_get_main_queue(), ^{
-                handler(RecorderError(@"There is no recording in progress"));
-            });
-            return;
-        }
         if (writer == nil || !CMTIME_IS_VALID(self->_lastTime))
         {
             [writer cancelWriting];
-            dispatch_async(dispatch_get_main_queue(), ^{
-                handler(RecorderError(@"No frame was received, so no movie was written"));
-            });
+            finished(RecorderError(@"No frame was received, so no movie was written"));
             return;
         }
 
@@ -634,10 +678,7 @@ static NSError *RecorderError(NSString *description)
         [input markAsFinished];
         [writer endSessionAtSourceTime:CMTimeMaximum(end, minimum)];
         [writer finishWritingWithCompletionHandler:^{
-            NSError *error = writer.status == AVAssetWriterStatusCompleted ? nil : (writer.error ?: RecorderError(@"The movie could not be finished"));
-            dispatch_async(dispatch_get_main_queue(), ^{
-                handler(error);
-            });
+            finished(writer.status == AVAssetWriterStatusCompleted ? nil : (writer.error ?: RecorderError(@"The movie could not be finished")));
         }];
     });
 }
