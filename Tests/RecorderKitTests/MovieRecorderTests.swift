@@ -87,24 +87,10 @@ final class MovieRecorderTests: XCTestCase {
         return (url, recorder)
     }
 
-    private func videoTrack(_ asset: AVAsset) throws -> AVAssetTrack {
-        try XCTUnwrap(asset.tracks(withMediaType: .video).first)
-    }
-
-    private func videoTrack(_ url: URL) throws -> AVAssetTrack {
-        try videoTrack(AVURLAsset(url: url))
-    }
-
-    private func codec(_ url: URL) throws -> String {
-        let description = try XCTUnwrap(videoTrack(url).formatDescriptions.first)
-        let code = CMFormatDescriptionGetMediaSubType(description as! CMFormatDescription)
-        return String(bytes: [24, 16, 8, 0].map { UInt8((code >> $0) & 0xFF) }, encoding: .ascii) ?? ""
-    }
-
     private func sampleCount(_ url: URL) throws -> Int {
         let asset = AVURLAsset(url: url)
         let reader = try AVAssetReader(asset: asset)
-        let output = AVAssetReaderTrackOutput(track: try videoTrack(asset), outputSettings: nil)
+        let output = AVAssetReaderTrackOutput(track: try MovieInfo.videoTrack(asset), outputSettings: nil)
         reader.add(output)
         reader.startReading()
         var count = 0
@@ -118,7 +104,7 @@ final class MovieRecorderTests: XCTestCase {
     private func firstFrame(_ url: URL) throws -> (width: Int, height: Int, pixel: (Int, Int) -> (b: Int, g: Int, r: Int, a: Int)) {
         let asset = AVURLAsset(url: url)
         let reader = try AVAssetReader(asset: asset)
-        let output = AVAssetReaderTrackOutput(track: try videoTrack(asset),
+        let output = AVAssetReaderTrackOutput(track: try MovieInfo.videoTrack(asset),
                                               outputSettings: [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA])
         reader.add(output)
         reader.startReading()
@@ -156,9 +142,9 @@ final class MovieRecorderTests: XCTestCase {
         XCTAssertEqual(recorder.framesWritten, 30)
         XCTAssertEqual(recorder.framesDropped, 0)
         XCTAssertEqual(recorder.outputSize, CGSize(width: 640, height: 360))
-        XCTAssertEqual(try videoTrack(url).naturalSize, CGSize(width: 640, height: 360))
-        XCTAssertEqual(AVURLAsset(url: url).duration.seconds, 1.0, accuracy: 0.02)
-        XCTAssertEqual(try codec(url), "avc1")
+        XCTAssertEqual(try MovieInfo(url).size, CGSize(width: 640, height: 360))
+        XCTAssertEqual(try MovieInfo(url).duration, 1.0, accuracy: 0.02)
+        XCTAssertEqual(try MovieInfo(url).codec, "avc1")
         XCTAssertEqual(try sampleCount(url), 30)
     }
 
@@ -175,7 +161,7 @@ final class MovieRecorderTests: XCTestCase {
         XCTAssertEqual(recorder.framesWritten, 31)
         XCTAssertEqual(recorder.framesDropped, 0)
         XCTAssertEqual(try sampleCount(url), 31)
-        XCTAssertEqual(try videoTrack(url).nominalFrameRate, 30, accuracy: 0.5)
+        XCTAssertEqual(try MovieInfo(url).frameRate, 30, accuracy: 0.5)
     }
 
     func testPictureIsTheRightWayUp() throws {
@@ -214,13 +200,13 @@ final class MovieRecorderTests: XCTestCase {
     func testOddSourceSizeIsRoundedDown() throws {
         let (url, _) = try record(makeTexture(width: 641, height: 361), count: 5, rate: 30, settings: settings())
 
-        XCTAssertEqual(try videoTrack(url).naturalSize, CGSize(width: 640, height: 360))
+        XCTAssertEqual(try MovieInfo(url).size, CGSize(width: 640, height: 360))
     }
 
     func testOneDimensionZeroUsesSourceSize() throws {
         let (url, _) = try record(makeTexture(width: 640, height: 360), count: 5, rate: 30, settings: settings(width: 800, height: 0))
 
-        XCTAssertEqual(try videoTrack(url).naturalSize, CGSize(width: 640, height: 360))
+        XCTAssertEqual(try MovieInfo(url).size, CGSize(width: 640, height: 360))
     }
 
     func testSourceSizeChangeKeepsOutputSize() throws {
@@ -233,19 +219,19 @@ final class MovieRecorderTests: XCTestCase {
         XCTAssertNil(finish(recorder, at: 20.0 / 30))
 
         XCTAssertEqual(recorder.framesWritten, 20)
-        XCTAssertEqual(try videoTrack(url).naturalSize, CGSize(width: 640, height: 360))
+        XCTAssertEqual(try MovieInfo(url).size, CGSize(width: 640, height: 360))
         XCTAssertEqual(try sampleCount(url), 20)
     }
 
     func testHEVCWrites() throws {
         let (url, _) = try record(makeTexture(width: 640, height: 360), count: 10, rate: 30, settings: settings(.HEVC))
-        XCTAssertEqual(try codec(url), "hvc1")
+        XCTAssertEqual(try MovieInfo(url).codec, "hvc1")
         assertOrange(try firstFrame(url).pixel(20, 20))
     }
 
     func testProRes422Writes() throws {
         let (url, _) = try record(makeTexture(width: 640, height: 360), count: 10, rate: 30, settings: settings(.proRes422))
-        XCTAssertEqual(try codec(url), "apcn")
+        XCTAssertEqual(try MovieInfo(url).codec, "apcn")
         assertOrange(try firstFrame(url).pixel(20, 20))
     }
 
@@ -253,7 +239,7 @@ final class MovieRecorderTests: XCTestCase {
         let texture = makeTexture(width: 640, height: 360, transparentRight: true)
         let (url, _) = try record(texture, count: 10, rate: 30, settings: settings(.proRes4444))
 
-        XCTAssertEqual(try codec(url), "ap4h")
+        XCTAssertEqual(try MovieInfo(url).codec, "ap4h")
         let frame = try firstFrame(url)
         XCTAssertGreaterThan(frame.pixel(100, 300).a, 250)
         XCTAssertLessThan(frame.pixel(540, 300).a, 5)

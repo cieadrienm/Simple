@@ -34,3 +34,4 @@
 #import "OSCReceiver.h"
 #import "OSCQueryServer.h"
 #import "MovieRecorder.h"
+#import "RecorderController.h"

@@ -85,7 +85,7 @@ getter, setter. The window binds to the same properties.
 
 | Address | Type | Access | Meaning |
 |---|---|---|---|
-| `/source` | s | rw | title of the source, as in the menu (`name - application`). `RANGE.VALS` lists the servers available. Setting matches the exact title, then a case-insensitive substring; an empty string selects none |
+| `/source` | s | rw | title of the source, as in the menu (`name - application`). `RANGE.VALS` lists the servers available. Setting matches the exact title, then a case-insensitive substring |
 | `/record` | i | rw | 1 starts, 0 stops |
 | `/record/toggle` | – | w | |
 | `/codec` | s | rw | `h264`, `hevc`, `prores422`, `prores4444` |
