@@ -28,7 +28,13 @@
  */
 
 #import <Foundation/Foundation.h>
+#import <Metal/Metal.h>
 
 @interface SimpleRenderer : NSObject
-- (void)render:(NSSize)dimensions;
+- (instancetype)initWithDevice:(id<MTLDevice>)device;
+/*
+ Draws the next frame of the animation and returns the texture it was drawn to. The texture is reused for subsequent
+ frames, and is only valid once commandBuffer has completed.
+ */
+- (id<MTLTexture>)renderFrameOfSize:(NSSize)dimensions onCommandBuffer:(id<MTLCommandBuffer>)commandBuffer;
 @end

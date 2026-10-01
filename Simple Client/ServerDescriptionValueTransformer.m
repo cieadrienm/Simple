@@ -44,8 +44,8 @@
             // These are the keys we can use in the server description dictionary.
             // Be prepared for either of the keys to be missing.
             
-            NSString* name = [description objectForKey:SyphonServerDescriptionNameKey];
-            NSString* appName = [description objectForKey:SyphonServerDescriptionAppNameKey];
+            NSString* name = description[SyphonServerDescriptionNameKey];
+            NSString* appName = description[SyphonServerDescriptionAppNameKey];
             
             // A server may not have a name (usually if it is the only server in an application)
             
@@ -54,7 +54,7 @@
             {
                 if ([name length] > 0)
                 {
-                    title = [name stringByAppendingFormat:@" - %@", appName, nil];
+                    title = [name stringByAppendingFormat:@" - %@", appName];
                 }
                 else
                 {

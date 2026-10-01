@@ -78,13 +78,11 @@ static NSString * const kServersMenuItemIdentifier = @"ServersMenuItemIdentifier
 
 - (void)toolbarWillAddItem:(NSNotification *)notification
 {
-	if (@available(macOS 10.14, *)) {
-		NSToolbar *toolbar = notification.object;
-		NSToolbarItem *item = notification.userInfo[@"item"];
-		if ([item.itemIdentifier isEqualToString:kStatusItemIdentifier])
-		{
-			toolbar.centeredItemIdentifier =  kStatusItemIdentifier;
-		}
-	}
+    NSToolbar *toolbar = notification.object;
+    NSToolbarItem *item = notification.userInfo[@"item"];
+    if ([item.itemIdentifier isEqualToString:kStatusItemIdentifier])
+    {
+        toolbar.centeredItemIdentifiers = [NSSet setWithObject:kStatusItemIdentifier];
+    }
 }
 @end

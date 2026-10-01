@@ -28,86 +28,123 @@
  */
 
 #import "Simple_ServerAppDelegate.h"
+#import <CoreVideo/CoreVideo.h>
+
+@interface Simple_ServerAppDelegate ()
+// The size of the frames we publish, set on the main thread and read when rendering
+@property (atomic, assign) NSSize frameSize;
+@end
 
 @implementation Simple_ServerAppDelegate {
-    SyphonOpenGLServer *syServer;
+    SyphonMetalServer *syServer;
     SimpleRenderer *renderer;
-    NSTimer* lameRenderingTimer;    //yea, should use display link but this is a demo.
+    id<MTLCommandQueue> commandQueue;
+    CVDisplayLinkRef displayLink;
 
-    NSUInteger FPS;
     NSTimeInterval fpsStart;
     NSUInteger fpsCount;
 }
-
-@synthesize window;
-@synthesize glView;
-
-@synthesize FPS;
 
 - (BOOL)applicationShouldTerminateAfterLastWindowClosed:(NSApplication *)theApplication
 {
 	return YES;
 }
 
-
 - (void)applicationDidFinishLaunching:(NSNotification *)aNotification
 {
-	// We need the CGLContext to create a server. Here we get it from our NSOpenGLView
+    // We need a MTLDevice to create a server. Here we use the one our view draws with
 
-	CGLContextObj context = [[glView openGLContext] CGLContextObj];
-	
+    id<MTLDevice> device = self.view.device;
+
 	// Create a server.
     // - This is our only server so we don't give it a name.
 
-	syServer = [[SyphonOpenGLServer alloc] initWithName:nil context:context options:nil];
+    syServer = [[SyphonMetalServer alloc] initWithName:nil device:device options:nil];
 
-    renderer = [[SimpleRenderer alloc] init];
+    renderer = [[SimpleRenderer alloc] initWithDevice:device];
+    commandQueue = [device newCommandQueue];
+
+    // It's quite likely you won't want to tie your renderer to the view's
+    // dimensions, but this is a useful way to show a server can vary its
+    // frame size (just resize the window)
+    self.frameSize = self.view.renderSize;
+    self.view.delegate = self;
+    // We show the frames we publish, as a client would receive them
+    self.view.imageIsFlipped = YES;
 
 	// A terrible FPS display
 	fpsStart = [NSDate timeIntervalSinceReferenceDate];
 
-	// NSTimer is not ideal for drawing video, but it's easy to use
-	lameRenderingTimer = [NSTimer timerWithTimeInterval:1.0/60.0 target:self selector:@selector(render:) userInfo:nil repeats:YES];
-	[[NSRunLoop currentRunLoop] addTimer:lameRenderingTimer forMode:NSRunLoopCommonModes];
+    // A display link gives us steady timing, and (unlike drawing from the view) keeps publishing
+    // frames when our window is hidden
+    CVDisplayLinkCreateWithActiveCGDisplays(&displayLink);
+    __weak Simple_ServerAppDelegate *weakSelf = self;
+    CVDisplayLinkSetOutputHandler(displayLink, ^CVReturn(CVDisplayLinkRef link, const CVTimeStamp *now, const CVTimeStamp *outputTime, CVOptionFlags flagsIn, CVOptionFlags *flagsOut) {
+        @autoreleasepool {
+            [weakSelf render];
+        }
+        return kCVReturnSuccess;
+    });
+    CVDisplayLinkStart(displayLink);
 }
 
-- (void) applicationWillTerminate:(NSNotification *)notification
-{	
+- (void)applicationWillTerminate:(NSNotification *)notification
+{
+    CVDisplayLinkStop(displayLink);
+    CVDisplayLinkRelease(displayLink);
+    displayLink = NULL;
+
 	// You should always stop a server so clients know it has gone
 	[syServer stop];
 }
 
-// render timer
--(void) render:(NSTimer*) aTimer
+- (void)mtkView:(MTKView *)view drawableSizeWillChange:(CGSize)size
 {
-    // It's quite likely you won't want to tie your renderer to the view's
-    // dimensions, but this is a useful way to show a server can vary its
-    // frame size (just resize the window)
-    NSSize frameSize = glView.renderSize;
+    self.frameSize = size;
+}
 
-    [self.glView.openGLContext makeCurrentContext];
-    [syServer bindToDrawFrameOfSize:frameSize];
+- (void)drawInMTKView:(MTKView *)view
+{
+    // SimpleImageView does its own drawing
+}
 
-    [renderer render:frameSize];
+// Called by the display link, on its own thread
+- (void)render
+{
+    id<MTLCommandBuffer> commandBuffer = [commandQueue commandBuffer];
 
-    [syServer unbindAndPublish];
+    id<MTLTexture> frame = [renderer renderFrameOfSize:self.frameSize onCommandBuffer:commandBuffer];
 
-    SyphonOpenGLImage *image = [syServer newFrameImage];
+    // The server copies the texture, and publishes the frame once our command buffer has completed.
+    // Syphon frames have their first row at the bottom of the picture (as OpenGL does) but Metal renders the
+    // first row at the top, so we ask the server to flip our texture.
+    [syServer publishFrameTexture:frame
+                  onCommandBuffer:commandBuffer
+                      imageRegion:NSMakeRect(0, 0, frame.width, frame.height)
+                          flipped:YES];
 
-    glView.image = image;
+    [commandBuffer commit];
 
-    [glView setNeedsDisplay:YES];
+    // Show what our clients see
+    id<MTLTexture> image = [syServer newFrameImage];
 
-    // Monitor frame-rate
+    dispatch_async(dispatch_get_main_queue(), ^{
+        self.view.image = image;
 
-    fpsCount++;
-    float elapsed = [NSDate timeIntervalSinceReferenceDate] - fpsStart;
-    if (elapsed > 0.5)
-    {
-        self.FPS = fpsCount / elapsed;
-        fpsCount = 0;
-        fpsStart = [NSDate timeIntervalSinceReferenceDate];
-    }
+        [self.view setNeedsDisplay:YES];
+
+        // Monitor frame-rate
+
+        self->fpsCount++;
+        NSTimeInterval now = [NSDate timeIntervalSinceReferenceDate];
+        NSTimeInterval elapsed = now - self->fpsStart;
+        if (elapsed > 0.5)
+        {
+            self.FPS = lround(self->fpsCount / elapsed);
+            self->fpsCount = 0;
+            self->fpsStart = now;
+        }
+    });
 }
 
 @end

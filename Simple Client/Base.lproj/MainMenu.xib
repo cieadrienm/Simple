@@ -683,10 +683,10 @@
                 <rect key="frame" x="0.0" y="0.0" width="640" height="480"/>
                 <autoresizingMask key="autoresizingMask" widthSizable="YES" heightSizable="YES"/>
                 <subviews>
-                    <openGLView wantsLayer="YES" fixedFrame="YES" colorSize="8bit_RGB_8bit_Alpha" depthSize="16bit" useAuxiliaryDepthBufferStencil="NO" useDoubleBufferingEnabled="YES" allowOffline="YES" translatesAutoresizingMaskIntoConstraints="NO" id="535" customClass="SimpleImageView">
+                    <customView fixedFrame="YES" translatesAutoresizingMaskIntoConstraints="NO" id="535" customClass="SimpleImageView">
                         <rect key="frame" x="0.0" y="0.0" width="640" height="480"/>
                         <autoresizingMask key="autoresizingMask" widthSizable="YES" heightSizable="YES"/>
-                    </openGLView>
+                    </customView>
                 </subviews>
             </view>
             <toolbar key="toolbar" implicitIdentifier="95A3A9CD-A776-42B5-816F-4624357CCE76" allowsUserCustomization="NO" displayMode="iconOnly" sizeMode="regular" id="621">

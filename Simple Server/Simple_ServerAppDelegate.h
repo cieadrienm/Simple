@@ -32,8 +32,8 @@
 #import "SimpleRenderer.h"
 #import "SimpleImageView.h"
 
-@interface Simple_ServerAppDelegate : NSObject <NSApplicationDelegate>
+@interface Simple_ServerAppDelegate : NSObject <NSApplicationDelegate, MTKViewDelegate>
 @property (assign, nonatomic, readwrite) NSUInteger FPS;
-@property (assign) IBOutlet NSWindow *window;
-@property (assign) IBOutlet SimpleImageView* glView;
+@property (weak) IBOutlet NSWindow *window;
+@property (weak) IBOutlet SimpleImageView *view;
 @end

@@ -33,8 +33,8 @@
 #import "SimpleImageView.h"
 
 @interface SimpleClientAppDelegate : NSObject <NSApplicationDelegate, NSWindowDelegate>
-@property (assign) IBOutlet SimpleImageView *view;
-@property (readwrite, retain) NSArray *selectedServerDescriptions;
+@property (weak) IBOutlet SimpleImageView *view;
+@property (readwrite, strong) NSArray *selectedServerDescriptions;
 @property (readonly) NSString *status; // "frameWidth x frameHeight : FPS" or "--" if no server
 @property (readwrite, assign) NSUInteger FPS;
 @property (readwrite, assign) NSUInteger frameWidth;

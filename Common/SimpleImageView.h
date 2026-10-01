@@ -28,12 +28,21 @@
  */
 
 #import <Cocoa/Cocoa.h>
-#import <Syphon/Syphon.h>
+#import <MetalKit/MetalKit.h>
 
-@interface SimpleImageView : NSOpenGLView
-@property (readwrite, strong) SyphonOpenGLImage *image;
 /*
- Returns the dimensions the GL view will render at, including any adjustment for a high-resolution display
+ Draws a texture scaled to fit the view, preserving its aspect ratio.
+
+ The view only draws when asked to: call setNeedsDisplay: after changing the image.
+ */
+@interface SimpleImageView : MTKView
+@property (readwrite, strong) id<MTLTexture> image;
+/*
+ YES if the first row of the image is the bottom of the picture, as it is for Syphon frames
+ */
+@property (readwrite, assign) BOOL imageIsFlipped;
+/*
+ Returns the dimensions the view will render at, including any adjustment for a high-resolution display
  */
 @property (readonly) NSSize renderSize;
 @property (readonly) NSError *error;

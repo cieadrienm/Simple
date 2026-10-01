@@ -653,10 +653,10 @@
                 <rect key="frame" x="0.0" y="0.0" width="480" height="360"/>
                 <autoresizingMask key="autoresizingMask"/>
                 <subviews>
-                    <openGLView colorSize="8bit_RGB_8bit_Alpha" depthSize="16bit" useAuxiliaryDepthBufferStencil="NO" useDoubleBufferingEnabled="YES" allowOffline="YES" id="533" customClass="SimpleImageView">
+                    <customView id="533" customClass="SimpleImageView">
                         <rect key="frame" x="0.0" y="20" width="480" height="340"/>
                         <autoresizingMask key="autoresizingMask" widthSizable="YES" heightSizable="YES"/>
-                    </openGLView>
+                    </customView>
                     <textField verticalHuggingPriority="750" id="589">
                         <rect key="frame" x="17" y="4" width="183" height="14"/>
                         <autoresizingMask key="autoresizingMask" flexibleMaxX="YES" flexibleMaxY="YES"/>
@@ -678,7 +678,7 @@
         </window>
         <customObject id="494" customClass="Simple_ServerAppDelegate">
             <connections>
-                <outlet property="glView" destination="533" id="534"/>
+                <outlet property="view" destination="533" id="534"/>
                 <outlet property="window" destination="371" id="532"/>
             </connections>
         </customObject>

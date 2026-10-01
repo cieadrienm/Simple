@@ -29,12 +29,8 @@
 
 #import "SimpleClientAppDelegate.h"
 
-@interface SimpleClientAppDelegate (Private)
-- (void)resizeWindowForCurrentVideo;
-@end
-
 @implementation SimpleClientAppDelegate {
-    SyphonOpenGLClient* syClient;
+    SyphonMetalClient *syClient;
     IBOutlet NSArrayController *availableServersController;
 
     NSArray *selectedServerDescriptions;
@@ -78,8 +74,10 @@
     // Slightly weird binding here, if anyone can neatly and non-weirdly improve on this then feel free...
     [self bind:@"selectedServerDescriptions" toObject:availableServersController withKeyPath:@"selectedObjects" options:nil];
     
+    // Frames from a Syphon client have their first row at the bottom of the picture
+    self.view.imageIsFlipped = YES;
+
     [[self.view window] setContentMinSize:(NSSize){400.0,300.0}];
-	[[self.view window] setDelegate:self];
 }
 
 - (NSArray *)selectedServerDescriptions
@@ -104,50 +102,39 @@
             fpsStart = [NSDate timeIntervalSinceReferenceDate];
             fpsCount = 0;
             self.FPS = 0;
-            syClient = [[SyphonOpenGLClient alloc] initWithServerDescription:[descriptions lastObject]
-                                                               context:[[self.view openGLContext] CGLContextObj]
-                                                               options:nil newFrameHandler:^(SyphonOpenGLClient *client) {
+            syClient = [[SyphonMetalClient alloc] initWithServerDescription:[descriptions lastObject]
+                                                                     device:self.view.device
+                                                                    options:nil
+                                                            newFrameHandler:^(SyphonMetalClient *client) {
                 // This gets called whenever the client receives a new frame.
-                
+                id<MTLTexture> frame = [client newFrameImage];
+
                 // The new-frame handler could be called from any thread, but because we update our UI we have
                 // to do this on the main thread.
-                
-                [[NSOperationQueue mainQueue] addOperationWithBlock:^{
+                dispatch_async(dispatch_get_main_queue(), ^{
                     // First we track our framerate...
                     self->fpsCount++;
-                    float elapsed = [NSDate timeIntervalSinceReferenceDate] - self->fpsStart;
+                    NSTimeInterval now = [NSDate timeIntervalSinceReferenceDate];
+                    NSTimeInterval elapsed = now - self->fpsStart;
                     if (elapsed > 1.0)
                     {
-                        self.FPS = ceilf(self->fpsCount / elapsed);
-                        self->fpsStart = [NSDate timeIntervalSinceReferenceDate];
+                        self.FPS = lround(self->fpsCount / elapsed);
+                        self->fpsStart = now;
                         self->fpsCount = 0;
                     }
                     // ...then we check to see if our dimensions display or window shape needs to be updated
-                    SyphonOpenGLImage *frame = [client newFrameImage];
-
-                    NSSize imageSize = frame.textureSize;
-                    
-                    BOOL changed = NO;
-                    if (self.frameWidth != imageSize.width)
+                    if (frame && (self.frameWidth != frame.width || self.frameHeight != frame.height))
                     {
-                        changed = YES;
-                        self.frameWidth = imageSize.width;
-                    }
-                    if (self.frameHeight != imageSize.height)
-                    {
-                        changed = YES;
-                        self.frameHeight = imageSize.height;
-                    }
-                    if (changed)
-                    {
-                        [[self.view window] setContentAspectRatio:imageSize];
+                        self.frameWidth = frame.width;
+                        self.frameHeight = frame.height;
+                        [[self.view window] setContentAspectRatio:NSMakeSize(frame.width, frame.height)];
                         [self resizeWindowForCurrentVideo];
                     }
                     // ...then update the view and mark it as needing display
                     self.view.image = frame;
 
                     [self.view setNeedsDisplay:YES];
-                }];
+                });
             }];
             
             // If we have a client we do nothing - wait until it outputs a frame
@@ -193,13 +180,13 @@
 	NSSize minContentSize = [[self.view window] contentMinSize];
 	if (contentSize.height < minContentSize.height)
 	{
-		float scale = minContentSize.height / contentSize.height;
+		CGFloat scale = minContentSize.height / contentSize.height;
 		contentSize.height *= scale;
 		contentSize.width *= scale;
 	}
 	if (contentSize.width < minContentSize.width)
 	{
-		float scale = minContentSize.width / contentSize.width;
+		CGFloat scale = minContentSize.width / contentSize.width;
 		contentSize.height *= scale;
 		contentSize.width *= scale;
 	}
@@ -208,18 +195,18 @@
     NSRect frameRect = [[self.view window] frameRectForContentRect:contentRect];
     
     // Move the window up (or down) so it remains rooted at the top left
-    float delta = [[self.view window] frame].size.height - frameRect.size.height;
+    CGFloat delta = [[self.view window] frame].size.height - frameRect.size.height;
     frameRect.origin.y += delta;
     
     // Attempt to remain on-screen
     NSRect available = [[[self.view window] screen] visibleFrame];
-    if ((frameRect.origin.x + frameRect.size.width) > available.size.width)
+    if (NSMaxX(frameRect) > NSMaxX(available))
     {
-        frameRect.origin.x = available.size.width - frameRect.size.width;
+        frameRect.origin.x = NSMaxX(available) - frameRect.size.width;
     }
-    if ((frameRect.origin.y + frameRect.size.height) > available.size.height)
+    if (NSMaxY(frameRect) > NSMaxY(available))
     {
-        frameRect.origin.y = available.size.height - frameRect.size.height;
+        frameRect.origin.y = NSMaxY(available) - frameRect.size.height;
     }
 
     return frameRect;
@@ -244,10 +231,10 @@
     // Resize to the correct aspect ratio, keeping as close as possible to our current dimensions
     NSSize wantedContentSize = [self windowContentSizeForCurrentVideo];
     NSSize currentSize = [[[self.view window] contentView] frame].size;
-    float wr = wantedContentSize.width / currentSize.width;
-    float hr = wantedContentSize.height / currentSize.height;
-    NSUInteger widthScaledToHeight = wantedContentSize.width / hr;
-    NSUInteger heightScaledToWidth = wantedContentSize.height / wr;
+    CGFloat wr = wantedContentSize.width / currentSize.width;
+    CGFloat hr = wantedContentSize.height / currentSize.height;
+    CGFloat widthScaledToHeight = floor(wantedContentSize.width / hr);
+    CGFloat heightScaledToWidth = floor(wantedContentSize.height / wr);
     if (widthScaledToHeight - currentSize.width < heightScaledToWidth - currentSize.height)
     {
         wantedContentSize.width /= hr;
