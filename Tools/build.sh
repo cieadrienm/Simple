@@ -10,4 +10,5 @@ COMMON="-fobjc-arc -F $FRAMEWORKS -framework Syphon -framework Cocoa -framework 
 clang $COMMON -framework IOSurface Tools/syphon-probe.m -o "$OUT/syphon-probe"
 clang $COMMON -framework OpenGL Tools/gl-server.m -o "$OUT/gl-server"
 clang $COMMON -I Common -framework MetalKit -framework QuartzCore Tools/view-test.m Common/SimpleImageView.m -o "$OUT/view-test"
+swiftc -O Tools/movie-info.swift -o "$OUT/movie-info"
 echo "built: $OUT"

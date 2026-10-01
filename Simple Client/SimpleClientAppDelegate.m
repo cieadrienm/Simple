@@ -28,6 +28,22 @@
  */
 
 #import "SimpleClientAppDelegate.h"
+#import "ServerDescriptionValueTransformer.h"
+
+// The ports we listen on unless the environment says otherwise, which lets a second copy run beside the first
+static const NSInteger kDefaultOSCPort = 9230;
+static const NSInteger kDefaultOSCQueryPort = 9231;
+// How long an error stays in the status display
+static const NSTimeInterval kErrorDisplayTime = 6.0;
+
+static void *RecorderErrorContext = &RecorderErrorContext;
+static void *ServersContext = &ServersContext;
+
+@interface SimpleClientAppDelegate ()
+@property (readwrite, strong) RecorderController *recorder;
+// The recorder's last error, for a few seconds after it happened
+@property (copy) NSString *recentError;
+@end
 
 @implementation SimpleClientAppDelegate {
     SyphonMetalClient *syClient;
@@ -37,11 +53,14 @@
 
     NSTimeInterval fpsStart;
     NSUInteger fpsCount;
+
+    dispatch_source_t terminationSource;
 }
 
 + (NSSet *)keyPathsForValuesAffectingStatus
 {
-    return [NSSet setWithObjects:@"frameWidth", @"frameHeight", @"FPS", @"selectedServerDescriptions", @"view.error", nil];
+    return [NSSet setWithObjects:@"frameWidth", @"frameHeight", @"FPS", @"selectedServerDescriptions", @"view.error",
+            @"recorder.state", @"recorder.elapsed", @"recentError", nil];
 }
 
 - (NSString *)status
@@ -50,14 +69,22 @@
     {
         return self.view.error.localizedDescription;
     }
-    else if (self.frameWidth && self.frameHeight)
+    else if (self.recentError.length > 0)
     {
-        return [NSString stringWithFormat:@"%lu x %lu : %lu FPS", (unsigned long)self.frameWidth, (unsigned long)self.frameHeight, (unsigned long)self.FPS];
+        return self.recentError;
     }
-    else
+
+    NSString *source = @"--";
+    if (self.frameWidth && self.frameHeight)
     {
-        return @"--";
+        source = [NSString stringWithFormat:@"%lu x %lu : %lu FPS", (unsigned long)self.frameWidth, (unsigned long)self.frameHeight, (unsigned long)self.FPS];
     }
+    if (self.recorder.recording)
+    {
+        NSInteger seconds = (NSInteger)self.recorder.elapsed;
+        return [NSString stringWithFormat:@"\u25CF %02ld:%02ld:%02ld  %@", (long)(seconds / 3600), (long)((seconds / 60) % 60), (long)(seconds % 60), source];
+    }
+    return source;
 }
 
 - (BOOL)applicationShouldTerminateAfterLastWindowClosed:(NSApplication *)theApplication
@@ -78,7 +105,103 @@
     self.view.imageIsFlipped = YES;
 
     [[self.view window] setContentMinSize:(NSSize){400.0,300.0}];
+
+    // The recorder writes the frames of the selected server to a movie. It can be driven by OSC, and describes
+    // itself to OSCQuery clients.
+    self.recorder = [[RecorderController alloc] initWithDevice:self.view.device
+                                                sourceProvider:self
+                                                      defaults:[NSUserDefaults standardUserDefaults]];
+    [self.recorder addObserver:self forKeyPath:@"error" options:0 context:RecorderErrorContext];
+    [availableServersController addObserver:self forKeyPath:@"arrangedObjects" options:0 context:ServersContext];
+
+    NSDictionary<NSString *, NSString *> *environment = [[NSProcessInfo processInfo] environment];
+    NSInteger oscPort = [environment[@"SIMPLE_OSC_PORT"] integerValue] ?: kDefaultOSCPort;
+    NSInteger queryPort = [environment[@"SIMPLE_OSCQUERY_PORT"] integerValue] ?: kDefaultOSCQueryPort;
+    NSString *name = [[NSBundle mainBundle] objectForInfoDictionaryKey:(NSString *)kCFBundleNameKey] ?: @"Simple Client";
+    [self.recorder startNetworkWithOSCPort:oscPort queryPort:queryPort name:name];
+
+    // When we are asked to terminate by a signal (kill, or a script which stops a show) quit as we do from the
+    // menu, so that a movie being recorded is finished
+    signal(SIGTERM, SIG_IGN);
+    terminationSource = dispatch_source_create(DISPATCH_SOURCE_TYPE_SIGNAL, SIGTERM, 0, dispatch_get_main_queue());
+    dispatch_source_set_event_handler(terminationSource, ^{
+        // Not from this block: terminating waits for the movie to be finished, which is reported on the main
+        // queue, and the main queue does nothing else until this block returns
+        [NSApp performSelector:@selector(terminate:) withObject:nil afterDelay:0.0 inModes:@[NSRunLoopCommonModes]];
+    });
+    dispatch_resume(terminationSource);
 }
+
+- (void)observeValueForKeyPath:(NSString *)keyPath ofObject:(id)object change:(NSDictionary *)change context:(void *)context
+{
+    if (context == RecorderErrorContext)
+    {
+        NSString *error = self.recorder.error;
+        self.recentError = error;
+        if (error.length > 0)
+        {
+            NSLog(@"%@", error);
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(kErrorDisplayTime * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+                // Unless another error has taken its place
+                if ([self.recentError isEqualToString:error])
+                {
+                    self.recentError = nil;
+                }
+            });
+        }
+    }
+    else if (context == ServersContext)
+    {
+        [self.recorder sourcesDidChange];
+    }
+    else
+    {
+        [super observeValueForKeyPath:keyPath ofObject:object change:change context:context];
+    }
+}
+
+- (NSApplicationTerminateReply)applicationShouldTerminate:(NSApplication *)sender
+{
+    if (!self.recorder.recording)
+    {
+        return NSTerminateNow;
+    }
+    // Finish the movie before we go
+    [self.recorder stopWithCompletionHandler:^{
+        [NSApp replyToApplicationShouldTerminate:YES];
+    }];
+    return NSTerminateLater;
+}
+
+#pragma mark RecorderSourceProvider
+
+- (NSArray<NSString *> *)sourceTitles
+{
+    NSMutableArray<NSString *> *titles = [NSMutableArray array];
+    for (NSDictionary *description in availableServersController.arrangedObjects)
+    {
+        [titles addObject:[ServerDescriptionValueTransformer titleForServerDescription:description]];
+    }
+    return titles;
+}
+
+- (NSString *)selectedSourceTitle
+{
+    NSDictionary *description = [selectedServerDescriptions lastObject];
+    return description ? [ServerDescriptionValueTransformer titleForServerDescription:description] : nil;
+}
+
+- (NSString *)selectedSourceApplicationName
+{
+    return [selectedServerDescriptions lastObject][SyphonServerDescriptionAppNameKey];
+}
+
+- (void)selectSourceAtIndex:(NSInteger)index
+{
+    [availableServersController setSelectionIndex:index];
+}
+
+#pragma mark Servers
 
 - (NSArray *)selectedServerDescriptions
 {
@@ -98,6 +221,7 @@
         {
             // Stop our current client
             [syClient stop];
+            [self.recorder sourceSelectionDidChange];
             // Reset our terrible FPS display
             fpsStart = [NSDate timeIntervalSinceReferenceDate];
             fpsCount = 0;
@@ -108,6 +232,12 @@
                                                             newFrameHandler:^(SyphonMetalClient *client) {
                 // This gets called whenever the client receives a new frame.
                 id<MTLTexture> frame = [client newFrameImage];
+
+                // The recorder takes the frame here, away from the main thread
+                if (frame)
+                {
+                    [self.recorder frameReceived:frame];
+                }
 
                 // The new-frame handler could be called from any thread, but because we update our UI we have
                 // to do this on the main thread.

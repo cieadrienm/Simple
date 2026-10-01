@@ -31,4 +31,6 @@
 
 
 @interface ServerDescriptionValueTransformer : NSValueTransformer
+// The title a server is shown with: "name - application", or whichever of the two it has
++ (NSString *)titleForServerDescription:(NSDictionary *)description;
 @end

@@ -31,11 +31,14 @@
 
 #import <Syphon/Syphon.h>
 #import "SimpleImageView.h"
+#import "RecorderController.h"
 
-@interface SimpleClientAppDelegate : NSObject <NSApplicationDelegate, NSWindowDelegate>
+@interface SimpleClientAppDelegate : NSObject <NSApplicationDelegate, NSWindowDelegate, RecorderSourceProvider>
 @property (weak) IBOutlet SimpleImageView *view;
+// Records the frames of the selected server
+@property (readonly, strong) RecorderController *recorder;
 @property (readwrite, strong) NSArray *selectedServerDescriptions;
-@property (readonly) NSString *status; // "frameWidth x frameHeight : FPS" or "--" if no server
+@property (readonly) NSString *status; // "frameWidth x frameHeight : FPS" or "--" if no server, with the time recorded while recording
 @property (readwrite, assign) NSUInteger FPS;
 @property (readwrite, assign) NSUInteger frameWidth;
 @property (readwrite, assign) NSUInteger frameHeight;

@@ -19,6 +19,12 @@
 		BDC63CDB13AFDF070097BBAD /* ToolbarDelegate.m in Sources */ = {isa = PBXBuildFile; fileRef = BDC63CDA13AFDF070097BBAD /* ToolbarDelegate.m */; };
 		BDC63CEE13AFFE830097BBAD /* ServerDescriptionValueTransformer.m in Sources */ = {isa = PBXBuildFile; fileRef = BDC63CED13AFFE830097BBAD /* ServerDescriptionValueTransformer.m */; };
 		E2D0981E18DD04F400DE623B /* SimpleImageView.m in Sources */ = {isa = PBXBuildFile; fileRef = E2D0981D18DD04F400DE623B /* SimpleImageView.m */; };
+		1B62659151FFFAF25427F5D7 /* FramePacer.m in Sources */ = {isa = PBXBuildFile; fileRef = E4FFAF7D0ABCBBA7AF5CF4BA /* FramePacer.m */; };
+		FC39C9EBB2E14A6801FD2773 /* OSCMessage.m in Sources */ = {isa = PBXBuildFile; fileRef = 575035D14017D8B2E9C6BB5B /* OSCMessage.m */; };
+		443F214182E01E3D55294532 /* OSCReceiver.m in Sources */ = {isa = PBXBuildFile; fileRef = 018EFB048A58E28014BCCC33 /* OSCReceiver.m */; };
+		785D93C8561E9A14996CE8ED /* OSCQueryServer.m in Sources */ = {isa = PBXBuildFile; fileRef = 42136AF224EA37724882D866 /* OSCQueryServer.m */; };
+		822E55CA904F23D0C5B6841F /* MovieRecorder.m in Sources */ = {isa = PBXBuildFile; fileRef = 6B2C9B3BD510ECB3CE0A1742 /* MovieRecorder.m */; };
+		C31FD4839C923C6EE0FCCF35 /* RecorderController.m in Sources */ = {isa = PBXBuildFile; fileRef = F8D05627EE5B053674732F58 /* RecorderController.m */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -70,6 +76,18 @@
 		E2CF0509227711B300B8CD19 /* en */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = en; path = en.lproj/InfoPlist.strings; sourceTree = "<group>"; };
 		E2D0981C18DD04F400DE623B /* SimpleImageView.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; name = SimpleImageView.h; path = ../Common/SimpleImageView.h; sourceTree = "<group>"; };
 		E2D0981D18DD04F400DE623B /* SimpleImageView.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; name = SimpleImageView.m; path = ../Common/SimpleImageView.m; sourceTree = "<group>"; };
+		7F417C6ACE60DDFA19CF7607 /* FramePacer.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; name = FramePacer.h; path = ../Recorder/FramePacer.h; sourceTree = "<group>"; };
+		E4FFAF7D0ABCBBA7AF5CF4BA /* FramePacer.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; name = FramePacer.m; path = ../Recorder/FramePacer.m; sourceTree = "<group>"; };
+		6E5A00F7C092CF5A169D412D /* OSCMessage.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; name = OSCMessage.h; path = ../Recorder/OSCMessage.h; sourceTree = "<group>"; };
+		575035D14017D8B2E9C6BB5B /* OSCMessage.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; name = OSCMessage.m; path = ../Recorder/OSCMessage.m; sourceTree = "<group>"; };
+		EACF07F787D6AB5ADC740B0B /* OSCReceiver.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; name = OSCReceiver.h; path = ../Recorder/OSCReceiver.h; sourceTree = "<group>"; };
+		018EFB048A58E28014BCCC33 /* OSCReceiver.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; name = OSCReceiver.m; path = ../Recorder/OSCReceiver.m; sourceTree = "<group>"; };
+		EBA1FADB45A2715D1DEAC8FD /* OSCQueryServer.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; name = OSCQueryServer.h; path = ../Recorder/OSCQueryServer.h; sourceTree = "<group>"; };
+		42136AF224EA37724882D866 /* OSCQueryServer.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; name = OSCQueryServer.m; path = ../Recorder/OSCQueryServer.m; sourceTree = "<group>"; };
+		109CDF81F3504E77B8943616 /* MovieRecorder.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; name = MovieRecorder.h; path = ../Recorder/MovieRecorder.h; sourceTree = "<group>"; };
+		6B2C9B3BD510ECB3CE0A1742 /* MovieRecorder.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; name = MovieRecorder.m; path = ../Recorder/MovieRecorder.m; sourceTree = "<group>"; };
+		D31CDAE973F5960DD4725DFD /* RecorderController.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; name = RecorderController.h; path = ../Recorder/RecorderController.h; sourceTree = "<group>"; };
+		F8D05627EE5B053674732F58 /* RecorderController.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; name = RecorderController.m; path = ../Recorder/RecorderController.m; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -129,6 +147,7 @@
 			children = (
 				1BB5771E11CF1EC8008A305F /* Syphon.xcodeproj */,
 				080E96DDFE201D6D7F000001 /* Classes */,
+				4500FC18B0AC02C7D445012E /* Recorder */,
 				29B97315FDCFA39411CA2CEA /* Other Sources */,
 				29B97317FDCFA39411CA2CEA /* Resources */,
 				29B97323FDCFA39411CA2CEA /* Frameworks */,
@@ -163,6 +182,25 @@
 				1058C7A0FEA54F0111CA2CBB /* Linked Frameworks */,
 			);
 			name = Frameworks;
+			sourceTree = "<group>";
+		};
+		4500FC18B0AC02C7D445012E /* Recorder */ = {
+			isa = PBXGroup;
+			children = (
+				7F417C6ACE60DDFA19CF7607 /* FramePacer.h */,
+				E4FFAF7D0ABCBBA7AF5CF4BA /* FramePacer.m */,
+				6E5A00F7C092CF5A169D412D /* OSCMessage.h */,
+				575035D14017D8B2E9C6BB5B /* OSCMessage.m */,
+				EACF07F787D6AB5ADC740B0B /* OSCReceiver.h */,
+				018EFB048A58E28014BCCC33 /* OSCReceiver.m */,
+				EBA1FADB45A2715D1DEAC8FD /* OSCQueryServer.h */,
+				42136AF224EA37724882D866 /* OSCQueryServer.m */,
+				109CDF81F3504E77B8943616 /* MovieRecorder.h */,
+				6B2C9B3BD510ECB3CE0A1742 /* MovieRecorder.m */,
+				D31CDAE973F5960DD4725DFD /* RecorderController.h */,
+				F8D05627EE5B053674732F58 /* RecorderController.m */,
+			);
+			name = Recorder;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -256,6 +294,12 @@
 				BDC63CDB13AFDF070097BBAD /* ToolbarDelegate.m in Sources */,
 				BDC63CEE13AFFE830097BBAD /* ServerDescriptionValueTransformer.m in Sources */,
 				E2D0981E18DD04F400DE623B /* SimpleImageView.m in Sources */,
+				1B62659151FFFAF25427F5D7 /* FramePacer.m in Sources */,
+				FC39C9EBB2E14A6801FD2773 /* OSCMessage.m in Sources */,
+				443F214182E01E3D55294532 /* OSCReceiver.m in Sources */,
+				785D93C8561E9A14996CE8ED /* OSCQueryServer.m in Sources */,
+				822E55CA904F23D0C5B6841F /* MovieRecorder.m in Sources */,
+				C31FD4839C923C6EE0FCCF35 /* RecorderController.m in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -311,7 +355,7 @@
 				INFOPLIST_FILE = "Simple_Client-Info.plist";
 				INSTALL_PATH = "$(HOME)/Applications";
 				LD_RUNPATH_SEARCH_PATHS = "@executable_path/../Frameworks";
-				PRODUCT_BUNDLE_IDENTIFIER = "info.v002.syphon.${PRODUCT_NAME:rfc1034identifier}";
+				PRODUCT_BUNDLE_IDENTIFIER = "net.am-cb.simple-client";
 				PRODUCT_NAME = "Simple Client";
 			};
 			name = Debug;
@@ -328,7 +372,7 @@
 				INFOPLIST_FILE = "Simple_Client-Info.plist";
 				INSTALL_PATH = "$(HOME)/Applications";
 				LD_RUNPATH_SEARCH_PATHS = "@executable_path/../Frameworks";
-				PRODUCT_BUNDLE_IDENTIFIER = "info.v002.syphon.${PRODUCT_NAME:rfc1034identifier}";
+				PRODUCT_BUNDLE_IDENTIFIER = "net.am-cb.simple-client";
 				PRODUCT_NAME = "Simple Client";
 			};
 			name = Release;
