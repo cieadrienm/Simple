@@ -132,19 +132,58 @@ int main(int argc, const char *argv[]) { @autoreleasepool {
     NSArray<NSString *> *identifiers = [toolbar toolbarDefaultItemIdentifiers:(NSToolbar * _Nonnull)nil];
     CHECK([identifiers containsObject:@"RecordItemIdentifier"] && [identifiers containsObject:@"SettingsItemIdentifier"], "default items are %s", identifiers.description.UTF8String);
     NSToolbarItem *record = [toolbar toolbar:(NSToolbar * _Nonnull)nil itemForItemIdentifier:@"RecordItemIdentifier" willBeInsertedIntoToolbar:YES];
-    CHECK(record.image != nil && [record.label isEqualToString:@"Record"], "record item is labelled %s", record.label.UTF8String);
-    [NSApp sendAction:record.action to:record.target from:record];
-    [[NSRunLoop currentRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.05]];
+    NSButton *recordButton = (NSButton *)record.view;
+    NSWindow *recordWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0, 0, 160, 60) styleMask:NSWindowStyleMaskTitled backing:NSBackingStoreBuffered defer:NO];
+    recordWindow.title = @"Simple Client";
+    recordWindow.appearance = [NSAppearance appearanceNamed:NSAppearanceNameDarkAqua];
+    [recordWindow.contentView addSubview:recordButton];
+    recordButton.frame = NSMakeRect(60, 15, 44, 28);
+    toolbar.window = recordWindow;
+    void (^savePicture)(NSString *) = ^(NSString *suffix) {
+        if (argc > 1)
+        {
+            NSView *content = recordWindow.contentView;
+            NSBitmapImageRep *rep = [content bitmapImageRepForCachingDisplayInRect:content.bounds];
+            [content cacheDisplayInRect:content.bounds toBitmapImageRep:rep];
+            NSString *path = [[@(argv[1]) stringByDeletingPathExtension] stringByAppendingFormat:@"-%@.png", suffix];
+            [[rep representationUsingType:NSBitmapImageFileTypePNG properties:@{}] writeToFile:path atomically:YES];
+        }
+    };
+    CHECK([recordButton isKindOfClass:[NSButton class]] && [record.label isEqualToString:@"Record"], "record item is labelled %s", record.label.UTF8String);
+    CHECK(recordButton.state == NSControlStateValueOff, "the record button looks pressed when idle");
+    CHECK([recordButton.image.accessibilityDescription isEqualToString:@"Record"], "idle, the button shows '%s'", recordButton.image.accessibilityDescription.UTF8String);
+    savePicture(@"record-idle");
+
+    // A recording started by an OSC message, not by the button: the button and the window must show it all the same
+    [recorder handleMessage:[[OSCMessage alloc] initWithAddress:@"/record" arguments:@[@1]]];
+    [[NSRunLoop currentRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:1.3]];
     CHECK([recorder.state isEqualToString:@"recording"], "state is %s (%s)", recorder.state.UTF8String, recorder.error.UTF8String);
+    CHECK(recordButton.state == NSControlStateValueOn, "the record button does not look pressed while recording");
+    CHECK([recordButton.image.accessibilityDescription isEqualToString:@"Stop"], "recording, the button shows '%s'", recordButton.image.accessibilityDescription.UTF8String);
     CHECK([record.label isEqualToString:@"Stop"], "record item is labelled %s while recording", record.label.UTF8String);
-    [NSApp sendAction:record.action to:record.target from:record];
+    CHECK([record.menuFormRepresentation.title isEqualToString:@"Stop Recording"], "in the overflow menu it is called '%s' while recording", record.menuFormRepresentation.title.UTF8String);
+    CHECK([recordWindow.title isEqualToString:@"\u25CF 00:00:01 \u2014 Simple Client"], "recording, the window is called '%s'", recordWindow.title.UTF8String);
+    savePicture(@"record-recording");
+
+    // The button stops it
+    [recordButton performClick:nil];
     NSDate *limit = [NSDate dateWithTimeIntervalSinceNow:5];
     while (recorder.recording && limit.timeIntervalSinceNow > 0)
     {
         [[NSRunLoop currentRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.05]];
     }
     CHECK([recorder.state isEqualToString:@"idle"], "state is %s", recorder.state.UTF8String);
+    CHECK(recordButton.state == NSControlStateValueOff, "the record button still looks pressed when idle again");
     CHECK([record.label isEqualToString:@"Record"], "record item is labelled %s when idle", record.label.UTF8String);
+    CHECK([recordWindow.title isEqualToString:@"Simple Client"], "idle again, the window is called '%s'", recordWindow.title.UTF8String);
+
+    // A click which cannot start a recording must not leave the button pressed
+    NSString *goodFolder = recorder.folder;
+    recorder.folder = @"/nonexistent";
+    [recordButton performClick:nil];
+    [[NSRunLoop currentRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.1]];
+    CHECK(recordButton.state == NSControlStateValueOff && !recorder.recording, "the button stays pressed though the recording did not start");
+    recorder.folder = goodFolder;
 
     NSToolbarItem *settingsItem = [toolbar toolbar:(NSToolbar * _Nonnull)nil itemForItemIdentifier:@"SettingsItemIdentifier" willBeInsertedIntoToolbar:YES];
     CHECK(settingsItem.view != nil && [settingsItem.label isEqualToString:@"Settings"], "settings item is labelled %s", settingsItem.label.UTF8String);

@@ -43,6 +43,7 @@ D1–D4 ont été validées par Adrien (1ᵉʳ octobre 2026) ; les suivantes ont
 - **D30 — Laissés tels quels** : alpha ProRes 4444 écrit comme reçu (sans marquage prémultiplié), couleurs marquées BT.709 sans conversion, pas d'alerte d'espace disque, pas de protection contre une mise en veille forcée.
 
 - **D31 — Barre d'outils en fenêtre étroite.** La fenêtre garde la forme de l'image, donc peut être étroite (source carrée ou verticale). Le menu des sources rétrécit jusqu'à 80 points avant d'être masqué ; lui et le bouton d'enregistrement sont masqués en dernier, l'état en premier. Dans le menu de débordement, « Source » est un sous-menu et « Recording Settings… » ouvre le popover sous la barre. `minSize`/`maxSize` de l'élément (dépréciés) sont utilisés : la barre d'outils ne comprime pas une vue par ses contraintes.
+- **D32 — Qu'on enregistre doit sauter aux yeux, quel que soit ce qui a lancé l'enregistrement.** Le bouton reste enfoncé et devient un carré blanc sur disque rouge (avant : un anneau rouge qui devenait un disque rouge, presque pareil), et le titre de la fenêtre devient « ● 00:13:45 — Simple Client ». Le chrono de la zone d'état ne suffisait pas : elle est masquée en fenêtre étroite. Constaté le 2 octobre : Adrien a lancé un enregistrement en OSC, n'a rien vu changer, et l'a laissé tourner 14 minutes en croyant que l'OSC ne marchait pas.
 
 ## Constaté
 

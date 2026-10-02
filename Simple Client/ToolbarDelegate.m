@@ -52,11 +52,22 @@ static void *RecorderStateContext = &RecorderStateContext;
     IBOutlet NSPopUpButton  *availableServersMenu;
     IBOutlet NSBox *statusBox;
     NSToolbarItem *recordItem;
+    NSButton *recordButton;
+    // The window's title when nothing is being recorded
+    NSString *idleWindowTitle;
+}
+
++ (NSArray<NSString *> *)observedRecorderKeys
+{
+    return @[@"state", @"elapsed"];
 }
 
 - (void)dealloc
 {
-    [_recorder removeObserver:self forKeyPath:@"state" context:RecorderStateContext];
+    for (NSString *key in [[self class] observedRecorderKeys])
+    {
+        [_recorder removeObserver:self forKeyPath:key context:RecorderStateContext];
+    }
 }
 
 - (NSArray *)toolbarDefaultItemIdentifiers:(NSToolbar *)toolbar
@@ -73,9 +84,15 @@ static void *RecorderStateContext = &RecorderStateContext;
 
 - (void)setRecorder:(RecorderController *)recorder
 {
-    [_recorder removeObserver:self forKeyPath:@"state" context:RecorderStateContext];
+    for (NSString *key in [[self class] observedRecorderKeys])
+    {
+        [_recorder removeObserver:self forKeyPath:key context:RecorderStateContext];
+    }
     _recorder = recorder;
-    [_recorder addObserver:self forKeyPath:@"state" options:0 context:RecorderStateContext];
+    for (NSString *key in [[self class] observedRecorderKeys])
+    {
+        [_recorder addObserver:self forKeyPath:key options:0 context:RecorderStateContext];
+    }
     [self showRecorderState];
 }
 
@@ -91,20 +108,61 @@ static void *RecorderStateContext = &RecorderStateContext;
     }
 }
 
-// The record item starts a recording, or stops the one in progress
+// Whoever started the recording (the button, the menu, an OSC message), it must be plain that we are recording:
+// the button stays pressed and becomes a stop button, and the window's title counts the time
 - (void)showRecorderState
 {
     BOOL recording = self.recorder.recording;
-    NSImage *image = [NSImage imageWithSystemSymbolName:(recording ? @"stop.circle.fill" : @"record.circle")
-                               accessibilityDescription:(recording ? @"Stop" : @"Record")];
-    recordItem.image = [image imageWithSymbolConfiguration:[NSImageSymbolConfiguration configurationWithPaletteColors:@[[NSColor systemRedColor]]]];
-    recordItem.label = recording ? @"Stop" : @"Record";
-    recordItem.toolTip = recording ? @"Stop recording and finish the movie" : @"Record the source to a movie";
+
+    NSImage *image;
+    if (recording)
+    {
+        // A white square on a red disc
+        image = [[NSImage imageWithSystemSymbolName:@"stop.circle.fill" accessibilityDescription:@"Stop"]
+                 imageWithSymbolConfiguration:[NSImageSymbolConfiguration configurationWithPaletteColors:@[[NSColor whiteColor], [NSColor systemRedColor]]]];
+    }
+    else
+    {
+        image = [[NSImage imageWithSystemSymbolName:@"record.circle" accessibilityDescription:@"Record"]
+                 imageWithSymbolConfiguration:[NSImageSymbolConfiguration configurationWithPaletteColors:@[[NSColor systemRedColor]]]];
+    }
+    NSString *toolTip = recording ? @"Stop recording and finish the movie" : @"Record the source to a movie";
+    if (recordButton.state != (recording ? NSControlStateValueOn : NSControlStateValueOff) || ![recordButton.toolTip isEqualToString:toolTip])
+    {
+        recordButton.image = image;
+        recordButton.state = recording ? NSControlStateValueOn : NSControlStateValueOff;
+        recordButton.toolTip = toolTip;
+        recordItem.label = recording ? @"Stop" : @"Record";
+        recordItem.toolTip = toolTip;
+        recordItem.menuFormRepresentation.title = recording ? @"Stop Recording" : @"Start Recording";
+    }
+
+    NSWindow *window = self.window;
+    if (recording)
+    {
+        if (idleWindowTitle == nil)
+        {
+            idleWindowTitle = [window.title copy];
+        }
+        NSInteger seconds = (NSInteger)self.recorder.elapsed;
+        NSString *title = [NSString stringWithFormat:@"\u25CF %02ld:%02ld:%02ld \u2014 %@", (long)(seconds / 3600), (long)((seconds / 60) % 60), (long)(seconds % 60), idleWindowTitle ?: @""];
+        if (window && ![window.title isEqualToString:title])
+        {
+            window.title = title;
+        }
+    }
+    else if (idleWindowTitle)
+    {
+        window.title = idleWindowTitle;
+        idleWindowTitle = nil;
+    }
 }
 
 - (IBAction)toggleRecording:(id)sender
 {
     [self.recorder toggle];
+    // A click toggles the button by itself: it shows the recorder's state, which may not have changed
+    [self showRecorderState];
 }
 
 // sender is the settings button, or its item in the toolbar's overflow menu when the window is too narrow for it
@@ -200,12 +258,23 @@ static void *RecorderStateContext = &RecorderStateContext;
     }
     else if ([itemIdentifier isEqualToString:kRecordItemIdentifier])
     {
+        // A button which stays pressed while recording
+        NSButton *button = [NSButton buttonWithImage:[NSImage imageWithSystemSymbolName:@"record.circle" accessibilityDescription:@"Record"]
+                                              target:self
+                                              action:@selector(toggleRecording:)];
+        [button setButtonType:NSButtonTypePushOnPushOff];
+        [button setBezelStyle:NSBezelStyleTexturedRounded];
+        [item setLabel:@"Record"];
         [item setPaletteLabel:@"Record"];
-        [item setBordered:YES];
-        [item setTarget:self];
-        [item setAction:@selector(toggleRecording:)];
+        [item setView:button];
         [item setVisibilityPriority:NSToolbarItemVisibilityPriorityHigh];
+        NSMenuItem *menuForm = [[NSMenuItem alloc] initWithTitle:@"Start Recording" action:@selector(toggleRecording:) keyEquivalent:@""];
+        menuForm.target = self;
+        [item setMenuFormRepresentation:menuForm];
         recordItem = item;
+        recordButton = button;
+        // Not yet in the state it shows
+        recordButton.state = NSControlStateValueMixed;
         [self showRecorderState];
     }
     else if ([itemIdentifier isEqualToString:kSettingsItemIdentifier])
