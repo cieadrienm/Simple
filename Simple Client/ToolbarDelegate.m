@@ -35,7 +35,14 @@ static NSString * const kServersMenuItemIdentifier = @"ServersMenuItemIdentifier
 static NSString * const kRecordItemIdentifier = @"RecordItemIdentifier";
 static NSString * const kSettingsItemIdentifier = @"SettingsItemIdentifier";
 
+// The source menu is as wide as it was drawn in the nib, and can shrink to this
+static const CGFloat kServersMenuMinimumWidth = 80.0;
+static const CGFloat kServersMenuMaximumWidth = 203.0;
+
 static void *RecorderStateContext = &RecorderStateContext;
+
+@interface ToolbarDelegate () <NSMenuDelegate>
+@end
 
 @interface ToolbarDelegate ()
 @property (readwrite) NSPopover *settingsPopover;
@@ -100,7 +107,8 @@ static void *RecorderStateContext = &RecorderStateContext;
     [self.recorder toggle];
 }
 
-- (IBAction)showSettings:(NSButton *)sender
+// sender is the settings button, or its item in the toolbar's overflow menu when the window is too narrow for it
+- (IBAction)showSettings:(id)sender
 {
     if (self.recorder == nil)
     {
@@ -117,10 +125,41 @@ static void *RecorderStateContext = &RecorderStateContext;
     {
         [self.settingsPopover close];
     }
+    else if ([sender isKindOfClass:[NSView class]] && [sender window] != nil)
+    {
+        [self.settingsPopover showRelativeToRect:[sender bounds] ofView:sender preferredEdge:NSRectEdgeMaxY];
+    }
     else
     {
-        [self.settingsPopover showRelativeToRect:sender.bounds ofView:sender preferredEdge:NSRectEdgeMaxY];
+        // The button is not in the toolbar: under the toolbar, in the middle of the window
+        NSView *content = availableServersMenu.window.contentView ?: [NSApp mainWindow].contentView;
+        if (content == nil)
+        {
+            return;
+        }
+        NSRect top = NSMakeRect(NSMidX(content.bounds) - 1.0, content.isFlipped ? 0.0 : NSMaxY(content.bounds) - 1.0, 2.0, 1.0);
+        [self.settingsPopover showRelativeToRect:top ofView:content preferredEdge:content.isFlipped ? NSRectEdgeMaxY : NSRectEdgeMinY];
     }
+}
+
+#pragma mark Sources in the overflow menu
+
+- (void)menuNeedsUpdate:(NSMenu *)menu
+{
+    // The same sources as the menu in the toolbar, which bindings keep up to date
+    [menu removeAllItems];
+    NSInteger selected = availableServersMenu.indexOfSelectedItem;
+    [availableServersMenu.itemTitles enumerateObjectsUsingBlock:^(NSString *title, NSUInteger index, BOOL *stop) {
+        NSMenuItem *source = [menu addItemWithTitle:title action:@selector(chooseSource:) keyEquivalent:@""];
+        source.target = self;
+        source.tag = index;
+        source.state = ((NSInteger)index == selected) ? NSControlStateValueOn : NSControlStateValueOff;
+    }];
+}
+
+- (IBAction)chooseSource:(NSMenuItem *)sender
+{
+    [self.sourceProvider selectSourceAtIndex:sender.tag];
 }
 
 #pragma mark Items
@@ -134,8 +173,19 @@ static void *RecorderStateContext = &RecorderStateContext;
         [item setPaletteLabel:@"Source"];
         [item setToolTip:@"Select a Syphon Server"];
         [item setView:availableServersMenu];
-        NSMenuItem *menuForm = [[NSMenuItem alloc] init];
-        [menuForm setMenu:[availableServersMenu menu]];
+        // The window keeps the shape of the picture, so it can be narrow: the menu shrinks to make room, and is
+        // among the last items the toolbar hides
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+        [item setMinSize:NSMakeSize(kServersMenuMinimumWidth, availableServersMenu.frame.size.height)];
+        [item setMaxSize:NSMakeSize(kServersMenuMaximumWidth, availableServersMenu.frame.size.height)];
+#pragma clang diagnostic pop
+        [item setVisibilityPriority:NSToolbarItemVisibilityPriorityHigh];
+        // Where it is hidden all the same, the toolbar's overflow menu has the sources as a submenu
+        NSMenuItem *menuForm = [[NSMenuItem alloc] initWithTitle:@"Source" action:NULL keyEquivalent:@""];
+        NSMenu *sources = [[NSMenu alloc] initWithTitle:@"Source"];
+        sources.delegate = self;
+        menuForm.submenu = sources;
         [item setMenuFormRepresentation:menuForm];
     }
     else if ([itemIdentifier isEqualToString:kStatusItemIdentifier])
@@ -145,6 +195,8 @@ static void *RecorderStateContext = &RecorderStateContext;
         [item setToolTip:@"Status"];
         [statusBox setCornerRadius:4.0];
         [item setView:statusBox];
+        // The first to go when the window is narrow
+        [item setVisibilityPriority:NSToolbarItemVisibilityPriorityLow];
     }
     else if ([itemIdentifier isEqualToString:kRecordItemIdentifier])
     {
@@ -152,6 +204,7 @@ static void *RecorderStateContext = &RecorderStateContext;
         [item setBordered:YES];
         [item setTarget:self];
         [item setAction:@selector(toggleRecording:)];
+        [item setVisibilityPriority:NSToolbarItemVisibilityPriorityHigh];
         recordItem = item;
         [self showRecorderState];
     }
@@ -166,6 +219,9 @@ static void *RecorderStateContext = &RecorderStateContext;
         [item setPaletteLabel:@"Settings"];
         [item setToolTip:@"Codec, size, frame rate, bitrate and folder of the movies recorded"];
         [item setView:button];
+        NSMenuItem *menuForm = [[NSMenuItem alloc] initWithTitle:@"Recording Settings\u2026" action:@selector(showSettings:) keyEquivalent:@""];
+        menuForm.target = self;
+        [item setMenuFormRepresentation:menuForm];
     }
     else
     {

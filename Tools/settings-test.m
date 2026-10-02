@@ -7,12 +7,14 @@
 #import "ToolbarDelegate.h"
 
 @interface OneSource : NSObject <RecorderSourceProvider>
+// The last index given to selectSourceAtIndex:
+@property NSInteger selected;
 @end
 @implementation OneSource
 - (NSArray<NSString *> *)sourceTitles { return @[@"Test"]; }
 - (NSString *)selectedSourceTitle { return @"Test"; }
 - (NSString *)selectedSourceApplicationName { return @"Test"; }
-- (void)selectSourceAtIndex:(NSInteger)index {}
+- (void)selectSourceAtIndex:(NSInteger)index { self.selected = index; }
 @end
 
 static int failures = 0;
@@ -154,6 +156,73 @@ int main(int argc, const char *argv[]) { @autoreleasepool {
     // Whether it is shown cannot be checked here: a popover does not open in a window which is not on the screen
     CHECK([toolbar.settingsPopover.contentViewController isKindOfClass:[RecorderSettingsViewController class]], "the settings button makes no popover of the settings");
     [toolbar.settingsPopover close];
+
+    // The toolbar in a window: the source menu must stay visible, including in a narrow window (a square or
+    // upright source makes one, as the window keeps the picture's shape)
+    {
+        NSPopUpButton *servers = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(0, 0, 203, 18) pullsDown:NO];
+        [servers addItemsWithTitles:@[@"main view - eMotion", @"Simple Server", @"Map - AMKinectTrack"]];
+        [servers selectItemAtIndex:1];
+        NSBox *status = [[NSBox alloc] initWithFrame:NSMakeRect(0, 0, 130, 18)];
+        ToolbarDelegate *delegate = [[ToolbarDelegate alloc] init];
+        [delegate setValue:servers forKey:@"availableServersMenu"];
+        [delegate setValue:status forKey:@"statusBox"];
+        delegate.recorder = recorder;
+        delegate.sourceProvider = sources;
+
+        NSWindow *window = [[NSWindow alloc] initWithContentRect:NSMakeRect(0, 0, 617, 617)
+                                                       styleMask:NSWindowStyleMaskTitled | NSWindowStyleMaskClosable | NSWindowStyleMaskMiniaturizable | NSWindowStyleMaskResizable
+                                                         backing:NSBackingStoreBuffered defer:NO];
+        window.title = @"Simple Client";
+        NSToolbar *bar = [[NSToolbar alloc] initWithIdentifier:@"settings-test"];
+        bar.delegate = delegate;
+        bar.displayMode = NSToolbarDisplayModeIconOnly;
+        window.toolbar = bar;
+        for (NSNumber *width in @[@900, @617, @560, @500, @400])
+        {
+            [window setContentSize:NSMakeSize(width.doubleValue, width.doubleValue)];
+            [window layoutIfNeeded];
+            [window displayIfNeeded];
+            [[NSRunLoop currentRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.2]];
+            NSArray<NSString *> *visible = [bar.visibleItems valueForKey:@"itemIdentifier"];
+            if (getenv("SETTINGS_TEST_VERBOSE"))
+            {
+                printf("%d wide: source menu %.0f wide, visible: %s\n", width.intValue, servers.frame.size.width, [visible componentsJoinedByString:@", "].UTF8String);
+            }
+            CHECK([visible containsObject:@"ServersMenuItemIdentifier"], "in a window %d wide the source menu is not visible: %s", width.intValue, [visible componentsJoinedByString:@", "].UTF8String);
+            CHECK([visible containsObject:@"RecordItemIdentifier"], "in a window %d wide the record button is not visible: %s", width.intValue, [visible componentsJoinedByString:@", "].UTF8String);
+        }
+
+        // Where the toolbar still has to hide it, its place in the overflow menu must work
+        NSToolbarItem *serversItem = nil;
+        for (NSToolbarItem *item in bar.items)
+        {
+            if ([item.itemIdentifier isEqualToString:@"ServersMenuItemIdentifier"]) serversItem = item;
+        }
+        NSMenuItem *form = serversItem.menuFormRepresentation;
+        CHECK([form.title isEqualToString:@"Source"], "in the overflow menu the source menu is called '%s'", form.title.UTF8String);
+        // What AppKit does before it shows the submenu
+        [form.submenu.delegate menuNeedsUpdate:form.submenu];
+        NSArray<NSString *> *titles = [form.submenu.itemArray valueForKey:@"title"];
+        CHECK([titles isEqualToArray:servers.itemTitles], "its submenu lists %s", [titles componentsJoinedByString:@", "].UTF8String);
+        CHECK(form.submenu.itemArray.count == 3 && form.submenu.itemArray[1].state == NSControlStateValueOn, "the selected source is not checked");
+        // ...and so must the settings, whose button is hidden in the narrowest windows
+        NSToolbarItem *hiddenSettings = nil;
+        for (NSToolbarItem *item in bar.items)
+        {
+            if ([item.itemIdentifier isEqualToString:@"SettingsItemIdentifier"]) hiddenSettings = item;
+        }
+        NSMenuItem *settingsForm = hiddenSettings.menuFormRepresentation;
+        CHECK([settingsForm.title isEqualToString:@"Recording Settings\u2026"], "in the overflow menu the settings are called '%s'", settingsForm.title.UTF8String);
+        [NSApp sendAction:settingsForm.action to:settingsForm.target from:settingsForm];
+        CHECK([delegate.settingsPopover.contentViewController isKindOfClass:[RecorderSettingsViewController class]], "the overflow menu's settings item makes no popover of the settings");
+        [delegate.settingsPopover close];
+
+        sources.selected = -1;
+        NSMenuItem *third = form.submenu.itemArray.count == 3 ? form.submenu.itemArray[2] : nil;
+        [NSApp sendAction:third.action to:third.target from:third];
+        CHECK(sources.selected == 2, "choosing a source in the overflow menu selected %ld", (long)sources.selected);
+    }
 
     [defaults removePersistentDomainForName:suite];
     printf(failures ? "%d checks FAILED\n" : "all checks passed\n", failures);

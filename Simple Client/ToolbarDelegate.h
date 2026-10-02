@@ -33,6 +33,8 @@
 @interface ToolbarDelegate : NSObject <NSToolbarDelegate>
 // What the record and settings items act on
 @property (nonatomic, strong) RecorderController *recorder;
+// Selects a source chosen in the toolbar's overflow menu, where the source menu goes when the window is too narrow
+@property (weak) id<RecorderSourceProvider> sourceProvider;
 // The recorder's settings, once they have been shown
 @property (readonly) NSPopover *settingsPopover;
 // Starts recording, or stops

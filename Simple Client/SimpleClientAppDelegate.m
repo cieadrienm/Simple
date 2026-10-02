@@ -125,6 +125,7 @@ static void *ServersContext = &ServersContext;
     if ([toolbarDelegate isKindOfClass:[ToolbarDelegate class]])
     {
         toolbarDelegate.recorder = self.recorder;
+        toolbarDelegate.sourceProvider = self;
     }
     NSMenu *fileMenu = [[[NSApp mainMenu] itemWithTitle:@"File"] submenu];
     NSMenuItem *recordItem = [[NSMenuItem alloc] initWithTitle:@"Start Recording" action:@selector(toggleRecording:) keyEquivalent:@"r"];
