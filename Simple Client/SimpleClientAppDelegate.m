@@ -38,6 +38,7 @@ static const NSInteger kDefaultOSCQueryPort = 9231;
 static const NSTimeInterval kErrorDisplayTime = 6.0;
 
 static void *RecorderErrorContext = &RecorderErrorContext;
+static void *RecorderFailureContext = &RecorderFailureContext;
 static void *ServersContext = &ServersContext;
 
 @interface SimpleClientAppDelegate ()
@@ -56,6 +57,7 @@ static void *ServersContext = &ServersContext;
     NSUInteger fpsCount;
 
     dispatch_source_t terminationSource;
+    ToolbarDelegate *toolbarDelegate;
 }
 
 + (NSSet *)keyPathsForValuesAffectingStatus
@@ -118,12 +120,13 @@ static void *ServersContext = &ServersContext;
                                                 sourceProvider:self
                                                       defaults:[NSUserDefaults standardUserDefaults]];
     [self.recorder addObserver:self forKeyPath:@"error" options:0 context:RecorderErrorContext];
+    [self.recorder addObserver:self forKeyPath:@"recordingError" options:0 context:RecorderFailureContext];
     [availableServersController addObserver:self forKeyPath:@"arrangedObjects" options:0 context:ServersContext];
 
     // The toolbar's record and settings items, and File > Start Recording
-    ToolbarDelegate *toolbarDelegate = (ToolbarDelegate *)self.view.window.toolbar.delegate;
-    if ([toolbarDelegate isKindOfClass:[ToolbarDelegate class]])
+    if ([self.view.window.toolbar.delegate isKindOfClass:[ToolbarDelegate class]])
     {
+        toolbarDelegate = (ToolbarDelegate *)self.view.window.toolbar.delegate;
         toolbarDelegate.recorder = self.recorder;
         toolbarDelegate.sourceProvider = self;
         toolbarDelegate.window = self.view.window;
@@ -158,6 +161,7 @@ static void *ServersContext = &ServersContext;
     {
         NSString *error = self.recorder.error;
         self.recentError = error;
+        [self showNotice];
         if (error.length > 0)
         {
             NSLog(@"%@", error);
@@ -166,9 +170,14 @@ static void *ServersContext = &ServersContext;
                 if ([self.recentError isEqualToString:error])
                 {
                     self.recentError = nil;
+                    [self showNotice];
                 }
             });
         }
+    }
+    else if (context == RecorderFailureContext)
+    {
+        [self showNotice];
     }
     else if (context == ServersContext)
     {
@@ -178,6 +187,13 @@ static void *ServersContext = &ServersContext;
     {
         [super observeValueForKeyPath:keyPath ofObject:object change:change context:context];
     }
+}
+
+// Errors go to the window's title as well as the status item, which a narrow window hides: an error for a few
+// seconds, why the last recording ended until the next one
+- (void)showNotice
+{
+    toolbarDelegate.notice = self.recentError.length > 0 ? self.recentError : self.recorder.recordingError;
 }
 
 - (IBAction)toggleRecording:(id)sender

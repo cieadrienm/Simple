@@ -722,9 +722,15 @@ static NSString *StringFrom(NSArray *arguments)
 - (void)handleMessage:(OSCMessage *)message
 {
     RecorderParameter *parameter = _parametersByAddress[message.address];
+    if (parameter == nil)
+    {
+        // Said rather than ignored: an address which is not quite right is the usual reason "nothing happens"
+        self.error = [NSString stringWithFormat:@"There is no OSC address \u201C%@\u201D", message.address];
+        return;
+    }
     if (parameter.set == nil)
     {
-        // Not ours, or only to be read
+        self.error = [NSString stringWithFormat:@"%@ can only be read", message.address];
         return;
     }
     NSString *problem = parameter.set(message.arguments);

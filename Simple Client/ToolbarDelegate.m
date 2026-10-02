@@ -138,24 +138,34 @@ static void *RecorderStateContext = &RecorderStateContext;
     }
 
     NSWindow *window = self.window;
-    if (recording)
+    if (window == nil)
     {
-        if (idleWindowTitle == nil)
-        {
-            idleWindowTitle = [window.title copy];
-        }
+        return;
+    }
+    if (idleWindowTitle == nil)
+    {
+        idleWindowTitle = [window.title copy];
+    }
+    NSString *title = idleWindowTitle;
+    if (self.notice.length > 0)
+    {
+        title = [@"\u26A0 " stringByAppendingString:self.notice];
+    }
+    else if (recording)
+    {
         NSInteger seconds = (NSInteger)self.recorder.elapsed;
-        NSString *title = [NSString stringWithFormat:@"\u25CF %02ld:%02ld:%02ld \u2014 %@", (long)(seconds / 3600), (long)((seconds / 60) % 60), (long)(seconds % 60), idleWindowTitle ?: @""];
-        if (window && ![window.title isEqualToString:title])
-        {
-            window.title = title;
-        }
+        title = [NSString stringWithFormat:@"\u25CF %02ld:%02ld:%02ld \u2014 %@", (long)(seconds / 3600), (long)((seconds / 60) % 60), (long)(seconds % 60), idleWindowTitle];
     }
-    else if (idleWindowTitle)
+    if (![window.title isEqualToString:title])
     {
-        window.title = idleWindowTitle;
-        idleWindowTitle = nil;
+        window.title = title;
     }
+}
+
+- (void)setNotice:(NSString *)notice
+{
+    _notice = [notice copy];
+    [self showRecorderState];
 }
 
 - (IBAction)toggleRecording:(id)sender

@@ -48,7 +48,9 @@ Simple Client listens for OSC on UDP port **9230** and describes its parameters 
 
 OSC has no passwords: any machine which can reach Simple Client's port can start and stop recordings and change where they are written. Use it on a network you trust.
 
-Numbers are accepted as int or float. Settings are saved, and apply to the next recording. A message which cannot be applied is reported in `/status/error` and, for a few seconds, in the window.
+Numbers are accepted as int or float. Settings are saved, and apply to the next recording. A message which cannot be applied (a wrong argument, an address which does not exist) is reported in `/status/error` and, for a few seconds, in the window's title and status.
+
+While recording, the record button stays pressed and shows a stop square, and the window's title counts the time recorded.
 
     Tools/osc-send.py 9230 /codec hevc
     Tools/osc-send.py 9230 /record 1

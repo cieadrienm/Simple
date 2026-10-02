@@ -35,6 +35,9 @@
 @property (nonatomic, strong) RecorderController *recorder;
 // The window whose title shows the time recorded while recording
 @property (weak) NSWindow *window;
+// Something the user must see (an error), shown in the window's title for as long as it is set: the status item
+// is hidden when the window is narrow
+@property (nonatomic, copy) NSString *notice;
 // Selects a source chosen in the toolbar's overflow menu, where the source menu goes when the window is too narrow
 @property (weak) id<RecorderSourceProvider> sourceProvider;
 // The recorder's settings, once they have been shown

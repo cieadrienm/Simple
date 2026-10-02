@@ -142,11 +142,18 @@ final class RecorderControllerTests: XCTestCase {
         XCTAssertEqual(controller.width, 0)
     }
 
-    func testReadOnlyAndUnknownAddressesAreIgnored() {
-        send("/status/frames", NSNumber(value: 99))
+    func testAMessageToAnUnknownAddressIsReported() {
+        // What OSCScore sends for an empty flag on a track whose address was typed "/record <0>"
+        send("/record <0>")
+        XCTAssertTrue(controller.error.contains("/record <0>"), controller.error)
         send("/nothing/here", NSNumber(value: 1))
+        XCTAssertTrue(controller.error.contains("/nothing/here"), controller.error)
+    }
+
+    func testAMessageToAnAddressWhichCanOnlyBeReadIsReported() {
+        send("/status/frames", NSNumber(value: 99))
         XCTAssertEqual(controller.frames, 0)
-        XCTAssertEqual(controller.error, "")
+        XCTAssertTrue(controller.error.contains("/status/frames"), controller.error)
     }
 
     func testSettingsPersist() {
@@ -224,6 +231,41 @@ final class RecorderControllerTests: XCTestCase {
         let movie = try MovieInfo(URL(fileURLWithPath: controller.file))
         XCTAssertEqual(movie.size, CGSize(width: 640, height: 480))
         XCTAssertEqual(movie.codec, "apcn")
+    }
+
+    func testRecordZeroStopsWhateverTheTypeOfTheArgument() {
+        let zeros: [(String, Any)] = [("int", NSNumber(value: Int32(0))), ("float", NSNumber(value: Float(0))), ("double", NSNumber(value: 0.0)),
+                                      ("long", NSNumber(value: Int64(0))), ("false", NSNumber(value: false)), ("string", "0"), ("string 0.0", "0.0")]
+        for (name, zero) in zeros {
+            XCTAssertTrue(controller.start(), name)
+            deliverFrames(for: 0.1)
+            send("/record", zero)
+            XCTAssertNotEqual(controller.state, "recording", "/record with \(name) zero did not stop the recording")
+            waitForState("idle")
+        }
+    }
+
+    func testRecordZeroStopsWhenItArrivesInAPacketAsSendersMakeThem() {
+        // int, float, False, and a bundle, as bytes
+        func string(_ text: String) -> [UInt8] {
+            var bytes = Array(text.utf8) + [0]
+            while bytes.count % 4 != 0 { bytes.append(0) }
+            return bytes
+        }
+        let int = string("/record") + string(",i") + [0, 0, 0, 0]
+        let packets: [(String, [UInt8])] = [
+            ("int", int),
+            ("float", string("/record") + string(",f") + [0, 0, 0, 0]),
+            ("false", string("/record") + string(",F")),
+            ("bundle", string("#bundle") + [0, 0, 0, 0, 0, 0, 0, 1] + [0, 0, 0, UInt8(int.count)] + int),
+        ]
+        for (name, packet) in packets {
+            XCTAssertTrue(controller.start(), name)
+            deliverFrames(for: 0.1)
+            for message in OSCMessage.messages(fromPacket: Data(packet)) { controller.handle(message) }
+            XCTAssertNotEqual(controller.state, "recording", "/record 0 sent as \(name) did not stop the recording")
+            waitForState("idle")
+        }
     }
 
     func testToggleStartsThenStops() {

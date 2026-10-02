@@ -177,6 +177,12 @@ int main(int argc, const char *argv[]) { @autoreleasepool {
     CHECK([record.label isEqualToString:@"Record"], "record item is labelled %s when idle", record.label.UTF8String);
     CHECK([recordWindow.title isEqualToString:@"Simple Client"], "idle again, the window is called '%s'", recordWindow.title.UTF8String);
 
+    // Something to tell the user, which the status item cannot when a narrow window hides it
+    toolbar.notice = @"There is no OSC address \u201C/record <0>\u201D";
+    CHECK([recordWindow.title isEqualToString:@"\u26A0 There is no OSC address \u201C/record <0>\u201D"], "with a notice the window is called '%s'", recordWindow.title.UTF8String);
+    toolbar.notice = nil;
+    CHECK([recordWindow.title isEqualToString:@"Simple Client"], "the notice gone, the window is called '%s'", recordWindow.title.UTF8String);
+
     // A click which cannot start a recording must not leave the button pressed
     NSString *goodFolder = recorder.folder;
     recorder.folder = @"/nonexistent";
