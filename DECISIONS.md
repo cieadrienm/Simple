@@ -5,7 +5,7 @@ D1–D4 ont été validées par Adrien (1ᵉʳ octobre 2026) ; les suivantes ont
 
 ## Cadrage (validé)
 
-- **D1 — Dépôt privé `cieadrienm/Simple`, miroir Gitea `amcb/Simple`.** L'ancien `origin` (Syphon/Simple) est devenu `upstream`.
+- **D1 — Dépôt privé `cieadrienm/Simple`, miroir Gitea `amcb/simple`** (deux URLs de push sur `origin`, comme OSCScore). L'ancien `origin` (Syphon/Simple) est devenu `upstream`.
 - **D2 — Modernisation complète avec passage à Metal** (étape 1), plutôt qu'une simple réparation du build en gardant OpenGL.
 - **D3 — L'enregistreur vit dans Simple Client** ; Simple Server reste la source de test. Écarté : une troisième app.
 - **D4 — Vidéo seule.** L'audio de Syphon Recorder n'est pas repris.
@@ -41,6 +41,8 @@ D1–D4 ont été validées par Adrien (1ᵉʳ octobre 2026) ; les suivantes ont
 - **D28 — Le MCP répond par une erreur** à un démarrage alors qu'on enregistre, à un arrêt alors qu'on n'enregistre pas, et à un réglage que l'app n'a pas pris tel quel : un agent doit savoir que rien ne s'est passé.
 - **D29 — OSC sans authentification, sur toutes les interfaces.** C'est ce qu'est l'OSC ; le README le dit.
 - **D30 — Laissés tels quels** : alpha ProRes 4444 écrit comme reçu (sans marquage prémultiplié), couleurs marquées BT.709 sans conversion, pas d'alerte d'espace disque, pas de protection contre une mise en veille forcée.
+
+- **D31 — Barre d'outils en fenêtre étroite.** La fenêtre garde la forme de l'image, donc peut être étroite (source carrée ou verticale). Le menu des sources rétrécit jusqu'à 80 points avant d'être masqué ; lui et le bouton d'enregistrement sont masqués en dernier, l'état en premier. Dans le menu de débordement, « Source » est un sous-menu et « Recording Settings… » ouvre le popover sous la barre. `minSize`/`maxSize` de l'élément (dépréciés) sont utilisés : la barre d'outils ne comprime pas une vue par ses contraintes.
 
 ## Constaté
 

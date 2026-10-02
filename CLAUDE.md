@@ -11,7 +11,7 @@ vivant, app eMotion) est l'unique utilisateur ; il parle français.
 
 ## Façon de travailler
 - Répondre en français. Code, commentaires et commits en anglais, avec la ligne `Co-Authored-By` de l'harnais.
-- `origin` = GitHub `cieadrienm/Simple` (privé) ; `upstream` = `Syphon/Simple` ; `gitea` = `amcb/Simple`.
+- `git push origin master` pousse sur GitHub (`cieadrienm/Simple`, privé) **et** sur Gitea (`amcb/simple`) : deux URLs de push. `upstream` = `Syphon/Simple`.
 - Fichiers dérivés de Syphon : garder leur en-tête BSD. Fichiers neufs : même licence, copyright Adrien Mondot.
 
 ## Build et tests
