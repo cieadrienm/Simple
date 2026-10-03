@@ -1,7 +1,7 @@
 Simple Recorder
 ===============
 
-Simple Recorder records several [Syphon](https://github.com/Syphon/Syphon-Framework) sources at once, each to its own movie, all on one clock. It can be driven from its window, by OSC (described by OSCQuery) and by MCP.
+Simple Recorder records several [Syphon](https://github.com/Syphon/Syphon-Framework) sources at once: each to its own movie, all assembled in one movie (side by side, stacked, as a mosaic), or both, on one clock. It can be driven from its window, by OSC (described by OSCQuery) and by MCP.
 
 It grew out of Syphon's Simple Client. **Simple Server**, its companion, is still here: it publishes an animated test pattern (a pulsing background, a bar which sweeps across the frame and a marker in the top left corner), and `-ServerName A` gives it a name, so that several can run and be told apart.
 
@@ -9,20 +9,37 @@ The window
 ----------
 
 - **Sources**, on the left: the Syphon servers which are running. Tick one to record it; drag the ticked ones to order them. A source which goes away keeps its place, dimmed, and takes it again when it is back — also when its application was killed and relaunched. Up to eight. Only ticked sources are connected to.
-- **What they deliver**, in the middle, as it arrives.
-- **Settings**, on the right: the codec, frame rate and bitrate of the movies; the folder and the name.
-- **The take**, on top: the record button (⌘R), which stays pressed and shows a stop square while recording, whatever started the recording; the time; frames written and dropped.
+- **The picture**, in the middle: the sources assembled, live, as they are (or would be) recorded, each with its title over its part — the titles are not recorded. Under it, the four layouts and the picture's size. With *Separate* it is still shown: it is how the sources are watched.
+- **Settings**, on the right: the codec, frame rate and bitrate of the movies; the size of the assembled picture and the gap between its sources; the folder and the name.
+- **The take**, on top: the record button (⌘R), which stays pressed and shows a stop square while recording, whatever started the recording; the time; frames written and dropped; and what a recording writes: *Separate*, *Assembled* or *Both*.
 - **The state**, at the bottom: the OSC and OSCQuery ports, the space left, how many movies a recording writes, and why the last recording ended if it failed.
 
 Recording
 ---------
 
-Each ticked source is written to its own `.mov`, at its own size. The movies of a recording share its clock: each begins when its source's first frame arrives, so that they line up when laid one above the other in an editor.
+A recording writes, as chosen before it starts:
+
+- **Separate**: each ticked source to its own `.mov`, at its own size;
+- **Assembled**: one `.mov` of all the sources in one picture;
+- **Both**: all of these.
+
+The movies of a recording share its clock: each begins when its first frame arrives, so that they line up when laid one above the other in an editor.
+
+The sources are assembled in their order, on black (transparent with ProRes 4444, which also keeps each source's own transparency):
+
+| Layout | The picture's automatic size |
+|---|---|
+| **Row** (side by side) | every source at the height of the tallest; the widths added |
+| **Column** (stacked) | every source at the width of the widest; the heights added |
+| **Grid** (mosaic) | as many columns as the square root of the number of sources, rounded up; cells the size of the largest source, each source fitted in its cell |
+| **Focus** | the first source at its own size; the others share its height in a column on its right |
+
+With a size given, the whole picture is fitted into it, without distortion. One source alone is itself, whatever the layout. The picture of a recording is decided when it starts, from the sources as they are then, and does not change: a source which is away leaves its place black (as large as it was last seen, or as 1920 × 1080 if it never was), and one whose size changes is fitted in its place. A picture is written each time the first source which is delivering frames delivers one, with the latest frame of each of the others. A picture of more than 16384 pixels on a side cannot be written: the recording does not start, and says so — give the assembled picture a size.
 
 - **Codec**: H.264, HEVC, ProRes 422 or ProRes 4444 (which keeps transparency).
 - **Frame rate**: every frame of the sources, or a maximum. Above the maximum, frames in excess are discarded and those kept are evenly timed.
 - **Bitrate**: megabits per second for H.264 and HEVC, or automatic. ProRes has none to choose.
-- **Names**: `<name>.mov` for one source, `<name> — <source>.mov` for several; an empty name is `Simple Recorder` and the date. An existing movie is never overwritten: a number is added, the same for every movie of the recording.
+- **Names**: `<name>.mov` for the assembled movie, `<name> — <source>.mov` for each source's; a single source recorded alone, not assembled, is `<name>.mov`. An empty name is `Simple Recorder` and the date. An existing movie is never overwritten: a number is added, the same for every movie of the recording.
 
 Frames are encoded on the GPU, away from the main thread. If an encoder cannot keep up frames are dropped, and counted, rather than delaying anything. Quitting, closing the window or `kill` while recording finishes the movies first. If writing one movie fails (a full disk, for instance) the others go on, the reason stays in the window for as long as the recording does and until the next one, and what was written is kept. The sources cannot be changed while recording.
 
@@ -41,6 +58,10 @@ Simple Recorder listens for OSC on UDP port **9230** and describes its parameter
 | `/fps` | float | read, write | 0 for every frame of the sources |
 | `/bitrate` | float | read, write | Megabits per second, 0 for automatic |
 | `/folder`, `/name` | string | read, write | An empty name is the app's name and the date |
+| `/output` | string | read, write | `separate`, `assembled`, `both`: what a recording writes |
+| `/layout` | string | read, write | `row`, `column`, `grid`, `focus`: how the sources are assembled |
+| `/gap` | int | read, write | Pixels between the sources in the assembled picture, up to 1000 |
+| `/width`, `/height` | int | read, write | The size the assembled picture is fitted into; 0 for the size the sources need |
 | `/status/state` | string | read | `idle`, `recording`, or `finishing` while the movies are completed |
 | `/status/elapsed` | float | read | Seconds recorded |
 | `/status/dropped` | int | read | Frames lost in all the movies because an encoder could not keep up |
@@ -49,9 +70,11 @@ Simple Recorder listens for OSC on UDP port **9230** and describes its parameter
 | `/status/source/N/online` | int | read | 1 if the source in place N is delivering frames |
 | `/status/source/N/width`, `/height`, `/fps` | int, int, float | read | What it delivers |
 | `/status/source/N/file`, `/frames`, `/dropped` | string, int, int | read | Its movie |
-| `/status/file`, `/status/frames` | string, int | read | The first source's movie |
+| `/status/assembled/width`, `/height` | int | read | The size of the assembled picture as it is now, or of the recording in progress |
+| `/status/assembled/file`, `/frames`, `/dropped` | string, int, int | read | The assembled movie |
+| `/status/file`, `/status/frames` | string, int | read | The assembled movie or, if there is none, the first source's |
 
-`/width` and `/height` exist and are saved, for the assembled movie to come; a source's own movie is always the size of the source.
+A source's own movie is always the size of the source: `/width` and `/height` concern the assembled picture only. `/output`, `/layout`, `/gap`, `/width` and `/height` can be set while recording; they apply to the next recording.
 
 OSC has no passwords: any machine which can reach Simple Recorder's port can start and stop recordings and change where they are written. Use it on a network you trust.
 
@@ -59,6 +82,8 @@ Numbers are accepted as int or float. Settings are saved, and apply to the next 
 
     Tools/osc-send.py 9230 /source/1 "main view - eMotion"
     Tools/osc-send.py 9230 /source/2 "depthMap"
+    Tools/osc-send.py 9230 /output both
+    Tools/osc-send.py 9230 /layout focus
     Tools/osc-send.py 9230 /record 1
     curl 'localhost:9231/status/state?VALUE'
 
@@ -67,8 +92,8 @@ MCP
 
 `simple-recorder-mcp` is inside the app (`Contents/MacOS`). It is a stdio MCP server which reads the recorder through OSCQuery and writes with OSC, so the app must be running. `.mcp.json` declares it for Claude Code, from `build/Simple Recorder.app`.
 
-- `recorder_status`: the sources chosen and what each delivers and writes, the sources available, settings, state, errors
-- `recorder_configure {sources, source, codec, fps, bitrate, folder, name}`: changes what is given; `sources` is a list of titles, in order
+- `recorder_status`: the sources chosen and what each delivers and writes, the sources available, settings, the assembled picture and its movie (`assembled`), state, errors
+- `recorder_configure {sources, source, codec, fps, bitrate, folder, name, output, layout, gap, width, height}`: changes what is given; `sources` is a list of titles, in order
 - `recorder_start`: accepts the same; returns once recording, or fails with the reason
 - `recorder_stop`: returns once the movies are finished, with their paths
 
@@ -90,7 +115,7 @@ Tests
 
     Scripts/syphon.sh && swift test
 
-They cover which frames a maximum frame rate keeps, OSC messages and the UDP receiver, the OSCQuery server (which is eMotion's, unchanged), movies written from synthetic textures and read back (size, frame count, orientation, transparency, bitrate, a disk which fills up), a recording of several sources (names, one clock), the sources chosen and their states over OSC, Syphon servers as sources, the window's model, and the window itself, which is drawn off screen to `build/views/*.png` in its main states.
+They cover which frames a maximum frame rate keeps, OSC messages and the UDP receiver, the OSCQuery server (which is eMotion's, unchanged), movies written from synthetic textures and read back (size, frame count, orientation, transparency, bitrate, a disk which fills up), a recording of several sources (names, one clock, the assembled movie), the layouts, the sources composed into one picture and read back, the sources chosen and their states over OSC, Syphon servers as sources, the window's model, and the window itself, which is drawn off screen to `build/views/*.png` in its main states.
 
 Checking without looking at the screen
 --------------------------------------

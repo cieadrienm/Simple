@@ -96,7 +96,11 @@ struct Recorder {
         return [
             "sources": places,
             "sourcesAvailable": sources,
-            "settings": ["codec": value("/codec"), "fps": value("/fps"), "bitrate": value("/bitrate"), "folder": value("/folder"), "name": value("/name")],
+            "settings": ["codec": value("/codec"), "fps": value("/fps"), "bitrate": value("/bitrate"), "folder": value("/folder"), "name": value("/name"),
+                         "output": value("/output"), "layout": value("/layout"), "gap": value("/gap"), "width": value("/width"), "height": value("/height")],
+            // The assembled picture as it is now, and the assembled movie of the take being recorded or of the last one
+            "assembled": ["width": value("/status/assembled/width"), "height": value("/status/assembled/height"), "file": value("/status/assembled/file"),
+                          "frames": value("/status/assembled/frames"), "dropped": value("/status/assembled/dropped")],
             "state": value("/status/state"),
             "elapsed": value("/status/elapsed"),
             "dropped": value("/status/dropped"),
@@ -217,6 +221,16 @@ struct Recorder {
                 wanted.append(("/" + key, .float(Float(value)), { abs((($0 as? NSNumber)?.doubleValue ?? -1) - value) < 0.001 }))
             }
         }
+        for key in ["output", "layout"] {
+            if let value = try string(key) {
+                wanted.append(("/" + key, .string(value), { ($0 as? String) == value.lowercased() }))
+            }
+        }
+        for key in ["gap", "width", "height"] {
+            if let value = try number(key) {
+                wanted.append(("/" + key, .int(Int32(max(min(value, 1_000_000), -1_000_000))), { (($0 as? NSNumber)?.doubleValue ?? -1) == value.rounded() }))
+            }
+        }
         for key in ["folder", "name"] {
             if let value = try string(key) {
                 let expected = key == "folder" ? (value as NSString).expandingTildeInPath : value
@@ -314,29 +328,38 @@ let settingsProperties: [String: Any] = [
     "fps": ["type": "number", "description": "The most frames per second in the movie. 0: every frame of the source."],
     "bitrate": ["type": "number", "description": "Megabits per second, for h264 and hevc. 0: chosen from the size and frame rate."],
     "folder": ["type": "string", "description": "Folder the movies are written to. It must exist."],
-    "name": ["type": "string", "description": "Name of the recording, without extension. Empty: the app's name and the date. With several sources each movie adds its source's title. An existing file is never overwritten: a number is added."],
+    "name": ["type": "string", "description": "Name of the recording, without extension: the assembled movie's. Empty: the app's name and the date. A source's own movie adds its source's title, unless it is the only movie. An existing file is never overwritten: a number is added."],
+    "output": ["type": "string", "enum": ["separate", "assembled", "both"], "description": "What a recording writes. separate: one movie for each source, at its own size. assembled: one movie of all the sources in one picture. both: all of them."],
+    "layout": ["type": "string", "enum": ["row", "column", "grid", "focus"], "description": "How the sources are assembled, in their order. row: side by side. column: stacked. grid: a mosaic. focus: the first large, the others in a column on its right."],
+    "gap": ["type": "integer", "description": "Pixels between the sources in the assembled picture (black, or transparent with prores4444)"],
+    "width": ["type": "integer", "description": "Width the assembled picture is fitted into. 0 (or a height of 0): the size the sources need (see assembled in recorder_status)."],
+    "height": ["type": "integer", "description": "Height the assembled picture is fitted into. 0 (or a width of 0): the size the sources need."],
 ]
 
 let tools: [[String: Any]] = [
     ["name": "recorder_status",
      "description": "The state of Simple Recorder: the sources chosen for recording, in order, with what each delivers (online, size, frame rate) and its movie "
-        + "(file, frames written and dropped); the sources which can be chosen (sourcesAvailable); the settings; whether it is recording "
+        + "(file, frames written and dropped); the sources which can be chosen (sourcesAvailable); the settings, among them what a recording writes "
+        + "(output: separate | assembled | both) and how the sources are assembled (layout, gap, width, height); the assembled picture's size now and "
+        + "the assembled movie (assembled: width, height, file, frames, dropped); whether it is recording "
         + "(state: idle | recording | finishing) and for how long; the last error (error: a refused message, a recording which could not start), "
         + "and why the last recording ended if it failed (failure).",
      "inputSchema": schema([:])],
     ["name": "recorder_configure",
      "description": "Changes the sources chosen and the settings; only what is given changes. Settings are saved by the app and apply to the next recording. "
-        + "The sources cannot be changed while recording. Each source is recorded to its own movie, at its own size, all on one clock. "
+        + "The sources cannot be changed while recording. With output separate each source is recorded to its own movie, at its own size; with assembled "
+        + "the sources are recorded together in one movie, placed by layout in their order; with both, all of these. All the movies share one clock. "
         + "Returns the status afterwards.",
      "inputSchema": schema(settingsProperties)],
     ["name": "recorder_start",
-     "description": "Starts recording the sources chosen, one movie (.mov) each. Sources and settings can be given as for recorder_configure. "
-        + "Returns once the recording has started, with the path of each movie in sources[].file; fails with the reason if it could not start "
-        + "(no source chosen, folder missing…).",
+     "description": "Starts recording the sources chosen: one movie (.mov) each, one assembled movie, or both, as output says. "
+        + "Sources and settings can be given as for recorder_configure. Returns once the recording has started, with the path of each source's movie "
+        + "in sources[].file and of the assembled movie in assembled.file; fails with the reason if it could not start "
+        + "(no source chosen, folder missing, an assembled picture too large…).",
      "inputSchema": schema(settingsProperties)],
     ["name": "recorder_stop",
      "description": "Stops the recording and waits for the movies to be finished. Returns the status: each movie's path, frames written and dropped "
-        + "in sources[], the duration in elapsed. A source which delivered no frame has no movie.",
+        + "in sources[] and in assembled, the duration in elapsed. A source which delivered no frame has no movie.",
      "inputSchema": schema([:])],
 ]
 
@@ -373,7 +396,8 @@ while let line = readLine(strippingNewline: true) {
         result = ["protocolVersion": params["protocolVersion"] as? String ?? "2024-11-05",
                   "capabilities": ["tools": [:] as [String: Any]],
                   "serverInfo": ["name": "simple-recorder", "version": Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "dev"],
-                  "instructions": "Controls the Simple Recorder app, which records several Syphon sources at once, each to its own movie file. "
+                  "instructions": "Controls the Simple Recorder app, which records several Syphon sources at once: each to its own movie file, all assembled in one movie "
+                    + "(side by side, stacked, mosaic), or both. "
                     + "Call recorder_status first to see the sources and settings; recorder_configure chooses the sources; recorder_start and recorder_stop record."]
     case "ping": result = [:]
     case "tools/list": result = ["tools": tools]
