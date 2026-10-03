@@ -49,4 +49,32 @@ final class FramePacerTests: XCTestCase {
         let arrivals = (0..<10).map { 5.0 + Double($0) / 10 }
         assertEqual(keptTimes(cap: 60, arrivals: arrivals), (0..<10).map { Double($0 * 6) / 60 })
     }
+
+    // MARK: An origin given from outside
+
+    private func keptTimes(cap: Double, origin: Double, arrivals: [Double]) -> [Double] {
+        let pacer = FramePacer(framesPerSecond: cap, origin: origin)
+        return arrivals.compactMap { arrival in
+            let decision = pacer.decisionForFrame(atTime: arrival)
+            return decision.keep.boolValue ? decision.time : nil
+        }
+    }
+
+    func testAnOriginPlacesTheFirstFrameWhereItArrived() {
+        assertEqual(keptTimes(cap: 0, origin: 100, arrivals: [100.5, 100.75]), [0.5, 0.75])
+        assertEqual(keptTimes(cap: 30, origin: 100, arrivals: [100.5, 100.5 + 1.0 / 30]), [0.5, 0.5 + 1.0 / 30])
+    }
+
+    func testAFrameBeforeTheOriginIsDiscarded() {
+        assertEqual(keptTimes(cap: 0, origin: 100, arrivals: [99.9, 100.2]), [0.2])
+        assertEqual(keptTimes(cap: 30, origin: 100, arrivals: [99.9, 100.2]), [0.2])
+    }
+
+    func testAFrameAtTheOriginIsKeptAtZero() {
+        assertEqual(keptTimes(cap: 30, origin: 100, arrivals: [100, 100.001, 100.1]), [0, 0.1])
+    }
+
+    func testWithoutAnOriginTheFirstFrameIsZero() {
+        assertEqual(keptTimes(cap: 30, origin: .nan, arrivals: [1234.5, 1234.6]), [0, 0.1])
+    }
 }

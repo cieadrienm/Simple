@@ -65,7 +65,14 @@ extern NSString * const MovieRecorderErrorDomain;
 @interface MovieRecorder : NSObject
 - (instancetype)initWithDevice:(id<MTLDevice>)device;
 // Fails if a recording is in progress, if the file exists or if it could not be created in its folder.
+// The movie's time 0 is the arrival of its first frame.
 - (BOOL)startWritingToURL:(NSURL *)url settings:(MovieRecorderSettings *)settings error:(NSError **)error;
+// startTime: the time which is 0 in the movie, on the clock of appendTexture:flipped:atTime: — several movies
+// started with the same time share a clock, and each begins when its first frame arrives. NAN for the first frame.
+- (BOOL)startWritingToURL:(NSURL *)url
+                 settings:(MovieRecorderSettings *)settings
+                startTime:(NSTimeInterval)startTime
+                    error:(NSError **)error;
 // Can be called from any thread, and returns at once.
 // flipped: the first row of the texture is the bottom of the picture, as it is for Syphon frames.
 // time: when the frame arrived, in seconds, on the clock also used for finishAtTime:completionHandler:

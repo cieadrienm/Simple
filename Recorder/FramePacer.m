@@ -39,10 +39,23 @@
 
 - (instancetype)initWithFramesPerSecond:(double)framesPerSecond
 {
+    return [self initWithFramesPerSecond:framesPerSecond origin:NAN];
+}
+
+- (instancetype)initWithFramesPerSecond:(double)framesPerSecond origin:(double)origin
+{
     self = [super init];
     if (self)
     {
         _framesPerSecond = MAX(framesPerSecond, 0.0);
+        // Nothing kept yet: the first frame can be at time 0, in slot 0
+        _lastTime = -1.0;
+        _lastSlot = -1;
+        if (!isnan(origin))
+        {
+            _started = YES;
+            _firstTime = origin;
+        }
     }
     return self;
 }
@@ -53,12 +66,13 @@
     {
         _started = YES;
         _firstTime = time;
-        _lastTime = 0.0;
-        _lastSlot = 0;
-        return (FramePacerDecision){YES, 0.0};
     }
 
     double elapsed = time - _firstTime;
+    if (elapsed < 0.0)
+    {
+        return (FramePacerDecision){NO, 0.0};
+    }
 
     if (_framesPerSecond == 0.0)
     {

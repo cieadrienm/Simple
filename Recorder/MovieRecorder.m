@@ -218,6 +218,14 @@ static NSError *RecorderError(NSString *description)
 
 - (BOOL)startWritingToURL:(NSURL *)url settings:(MovieRecorderSettings *)settings error:(NSError **)error
 {
+    return [self startWritingToURL:url settings:settings startTime:NAN error:error];
+}
+
+- (BOOL)startWritingToURL:(NSURL *)url
+                 settings:(MovieRecorderSettings *)settings
+                startTime:(NSTimeInterval)startTime
+                    error:(NSError **)error
+{
     NSString *problem = nil;
     NSFileManager *fileManager = [NSFileManager defaultManager];
     NSString *folder = url.URLByDeletingLastPathComponent.path;
@@ -283,8 +291,10 @@ static NSError *RecorderError(NSString *description)
     }
 
     os_unfair_lock_lock(&_lock);
-    _pacer = [[FramePacer alloc] initWithFramesPerSecond:settings.framesPerSecond];
-    _hasFirstFrame = NO;
+    _pacer = [[FramePacer alloc] initWithFramesPerSecond:settings.framesPerSecond origin:startTime];
+    // The time which is 0 in the movie: given, or that of the first frame
+    _hasFirstFrame = !isnan(startTime);
+    _firstFrameTime = startTime;
     _framesWritten = 0;
     _framesDropped = 0;
     _framesPending = 0;

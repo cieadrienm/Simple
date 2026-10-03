@@ -286,6 +286,20 @@ final class MovieRecorderTests: XCTestCase {
         XCTAssertGreaterThan(high, low * 2)
     }
 
+    func testAStartTimePlacesTheFirstFrameOnTheClock() throws {
+        // A take which started at 100: this source's first frame arrives a second later
+        let url = folder.appendingPathComponent("late.mov")
+        let recorder = MovieRecorder(device: device)
+        try recorder.startWriting(to: url, settings: settings(), startTime: 100)
+        let texture = makeTexture(width: 320, height: 180)
+        for index in 0..<30 { append(texture, to: recorder, at: 101 + Double(index) / 30) }
+        XCTAssertNil(finish(recorder, at: 102))
+
+        XCTAssertEqual(try sampleCount(url), 30)
+        XCTAssertEqual(try MovieInfo(url).start, 1.0, accuracy: 0.02)
+        XCTAssertEqual(try MovieInfo(url).duration, 2.0, accuracy: 0.05)
+    }
+
     func testWriterIsReadyBeforeTheFirstFrameWhenTheSizeIsGiven() throws {
         // Creating the writer takes a moment: when it waits for the first frame, the frames which follow are lost
         let recorder = MovieRecorder(device: device)

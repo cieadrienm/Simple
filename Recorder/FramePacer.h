@@ -45,9 +45,12 @@ typedef struct {
  centred on their time, so a source running at the maximum rate keeps all of its frames even when they arrive unevenly.
  */
 @interface FramePacer : NSObject
-// framesPerSecond 0 keeps every frame, at the time it arrived
+// framesPerSecond 0 keeps every frame, at the time it arrived. The first frame defines time 0.
 - (instancetype)initWithFramesPerSecond:(double)framesPerSecond;
-// time: when the frame arrived, in seconds from any origin. The first call defines time 0.
+// origin: the time which is 0 in the movie, on the clock of the frames' arrival: several movies given the same
+// origin share a clock. Frames which arrived before it are discarded. NAN: the first frame defines time 0.
+- (instancetype)initWithFramesPerSecond:(double)framesPerSecond origin:(double)origin;
+// time: when the frame arrived, in seconds.
 - (FramePacerDecision)decisionForFrameAtTime:(double)time;
 @end
 
