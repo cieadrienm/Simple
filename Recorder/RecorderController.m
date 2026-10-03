@@ -30,6 +30,7 @@
 #import "RecorderController.h"
 #import "MovieRecorder.h"
 #import "Take.h"
+#import "Compositor.h"
 #import "OSCReceiver.h"
 #import "OSCQueryServer.h"
 #import <QuartzCore/QuartzCore.h>
@@ -41,10 +42,15 @@ const NSUInteger RecorderMaximumPlaces = 8;
 static NSString * const kStateIdle = @"idle";
 static NSString * const kStateRecording = @"recording";
 static NSString * const kStateFinishing = @"finishing";
+// What the assembled movie is called in an error, where a source's movie has its source's title
+static NSString * const kAssembledMovieTitle = @"Assembled movie";
 
 static const NSInteger kMaximumDimension = 16384;
 static const double kMaximumFramesPerSecond = 240.0;
 static const double kMaximumMegabitsPerSecond = 1000.0;
+static const NSInteger kMaximumGap = 1000;
+// When no take needs it, the assembled picture is composed this often at most, to be shown
+static const NSTimeInterval kMonitorInterval = 1.0 / 30.0;
 // How often what changes by itself is refreshed
 static const NSTimeInterval kRefreshInterval = 0.25;
 // A source which has delivered no frame for this long is not online
@@ -304,12 +310,31 @@ static NSString *StringFrom(NSArray *arguments)
     NSTimeInterval _startTime;
     NSTimeInterval _lastElapsed;
     NSMutableArray<void (^)(void)> *_stopHandlers;
+
+    // The take's pictures have a compositor of their own: one waiting to be encoded is drawn over after four
+    // more, and the monitor's must not count
+    Compositor *_takeCompositor;
+    Compositor *_monitorCompositor;
+    // Guards what follows, which the sources' threads read when a frame arrives
+    os_unfair_lock _composeLock;
+    NSArray<RecorderPlace *> *_composePlaces;
+    LayoutKind _composeKind;
+    NSInteger _composeGap;
+    NSSize _composeFittingSize;
+    BOOL _composeTransparent;
+    // The picture of the take being recorded, if it has an assembled movie
+    Layout *_takeLayout;
+    BOOL _takeTransparent;
+    // The place whose frames set the pace of the assembled picture
+    RecorderPlace *_clockPlace;
+    NSTimeInterval _lastComposeTime;
+    id<MTLTexture> _assembledFrame;
 }
 
 + (BOOL)automaticallyNotifiesObserversForKey:(NSString *)key
 {
     // These are refreshed together, by -refresh
-    if ([@[@"elapsed", @"frames", @"dropped", @"file"] containsObject:key])
+    if ([@[@"elapsed", @"frames", @"dropped", @"file", @"assembledFile", @"assembledFrames", @"assembledDropped"] containsObject:key])
     {
         return NO;
     }
@@ -341,7 +366,9 @@ static NSString *StringFrom(NSArray *arguments)
         [defaults registerDefaults:@{
             @"RecorderCodec": [MovieRecorderSettings nameForCodec:MovieCodecH264],
             @"RecorderFolder": movies ?: NSHomeDirectory(),
-            @"RecorderName": @""
+            @"RecorderName": @"",
+            @"RecorderOutput": [Take nameForOutput:TakeOutputSeparate],
+            @"RecorderLayout": [Layout nameForKind:LayoutKindRow]
         }];
         MovieCodec codec;
         NSString *codecName = [defaults stringForKey:@"RecorderCodec"];
@@ -352,6 +379,19 @@ static NSString *StringFrom(NSArray *arguments)
         _bitrate = [defaults doubleForKey:@"RecorderBitrate"];
         _folder = [[defaults stringForKey:@"RecorderFolder"] copy];
         _name = [[defaults stringForKey:@"RecorderName"] copy];
+        TakeOutput output;
+        NSString *outputName = [defaults stringForKey:@"RecorderOutput"];
+        _output = [Take getOutput:&output forName:outputName] ? [outputName copy] : [Take nameForOutput:TakeOutputSeparate];
+        LayoutKind kind;
+        NSString *layoutName = [defaults stringForKey:@"RecorderLayout"];
+        _layout = [Layout getKind:&kind forName:layoutName] ? [layoutName copy] : [Layout nameForKind:LayoutKindRow];
+        _gap = MIN(MAX([defaults integerForKey:@"RecorderGap"], 0), kMaximumGap);
+
+        _composeLock = OS_UNFAIR_LOCK_INIT;
+        _composePlaces = @[];
+        id<MTLCommandQueue> queue = [device newCommandQueue];
+        _takeCompositor = [[Compositor alloc] initWithCommandQueue:queue];
+        _monitorCompositor = [[Compositor alloc] initWithCommandQueue:queue];
 
         _take = [[Take alloc] initWithDevice:device];
         __weak RecorderController *weakSelf = self;
@@ -373,6 +413,7 @@ static NSString *StringFrom(NSArray *arguments)
         }
         _places = [places copy];
         [self connectPlaces];
+        [self compositionChanged];
         directory.changeHandler = ^{
             [weakSelf sourcesDidChange];
         };
@@ -407,6 +448,7 @@ static NSString *StringFrom(NSArray *arguments)
 {
     _codec = [codec copy];
     [_defaults setObject:_codec forKey:@"RecorderCodec"];
+    [self compositionChanged];
     [self changed];
 }
 
@@ -414,6 +456,7 @@ static NSString *StringFrom(NSArray *arguments)
 {
     _width = MIN(MAX(width, 0), kMaximumDimension);
     [_defaults setInteger:_width forKey:@"RecorderWidth"];
+    [self compositionChanged];
     [self changed];
 }
 
@@ -421,6 +464,7 @@ static NSString *StringFrom(NSArray *arguments)
 {
     _height = MIN(MAX(height, 0), kMaximumDimension);
     [_defaults setInteger:_height forKey:@"RecorderHeight"];
+    [self compositionChanged];
     [self changed];
 }
 
@@ -452,6 +496,39 @@ static NSString *StringFrom(NSArray *arguments)
     [self changed];
 }
 
+- (void)setOutput:(NSString *)output
+{
+    TakeOutput value;
+    if (![Take getOutput:&value forName:output ?: @""])
+    {
+        return;
+    }
+    _output = [Take nameForOutput:value];
+    [_defaults setObject:_output forKey:@"RecorderOutput"];
+    [self changed];
+}
+
+- (void)setLayout:(NSString *)layout
+{
+    LayoutKind kind;
+    if (![Layout getKind:&kind forName:layout ?: @""])
+    {
+        return;
+    }
+    _layout = [Layout nameForKind:kind];
+    [_defaults setObject:_layout forKey:@"RecorderLayout"];
+    [self compositionChanged];
+    [self changed];
+}
+
+- (void)setGap:(NSInteger)gap
+{
+    _gap = MIN(MAX(gap, 0), kMaximumGap);
+    [_defaults setInteger:_gap forKey:@"RecorderGap"];
+    [self compositionChanged];
+    [self changed];
+}
+
 - (void)setError:(NSString *)error
 {
     _error = [error copy];
@@ -476,12 +553,12 @@ static NSString *StringFrom(NSArray *arguments)
 
 - (NSUInteger)frames
 {
-    return self.places.firstObject.frames;
+    return _take.assembledMovie ? self.assembledFrames : self.places.firstObject.frames;
 }
 
 - (NSUInteger)dropped
 {
-    NSUInteger dropped = 0;
+    NSUInteger dropped = self.assembledDropped;
     for (RecorderPlace *place in self.places)
     {
         dropped += place.dropped;
@@ -491,13 +568,30 @@ static NSString *StringFrom(NSArray *arguments)
 
 - (NSString *)file
 {
-    return self.places.firstObject.file ?: @"";
+    return _take.assembledMovie ? self.assembledFile : (self.places.firstObject.file ?: @"");
+}
+
+- (NSString *)assembledFile
+{
+    // A movie which received no picture has no file
+    TakeMovie *movie = _take.assembledMovie;
+    return (movie && (![self.state isEqualToString:kStateIdle] || movie.framesWritten > 0)) ? movie.url.path : @"";
+}
+
+- (NSUInteger)assembledFrames
+{
+    return _take.assembledMovie.framesWritten;
+}
+
+- (NSUInteger)assembledDropped
+{
+    return _take.assembledMovie.framesDropped;
 }
 
 // Tells observers about the values which change by themselves
 - (void)refresh
 {
-    NSArray<NSString *> *keys = @[@"elapsed", @"frames", @"dropped", @"file"];
+    NSArray<NSString *> *keys = @[@"elapsed", @"frames", @"dropped", @"file", @"assembledFile", @"assembledFrames", @"assembledDropped"];
     for (NSString *key in keys)
     {
         [self willChangeValueForKey:key];
@@ -537,11 +631,211 @@ static NSString *StringFrom(NSArray *arguments)
             place.silentChecks++;
         }
     }
+    // The first place which is delivering frames sets the pace of the assembled picture
+    RecorderPlace *clock = nil;
+    for (RecorderPlace *place in self.places)
+    {
+        if (place.online)
+        {
+            clock = place;
+            break;
+        }
+    }
+    os_unfair_lock_lock(&_composeLock);
+    if (clock)
+    {
+        _clockPlace = clock;
+    }
+    BOOL still = now - _lastComposeTime > kRefreshInterval;
+    os_unfair_lock_unlock(&_composeLock);
+    if (still)
+    {
+        // No source sets the pace: the picture is still shown as it is (a source which has gone leaves it)
+        [self composeMonitorAtTime:now wait:NO];
+    }
     for (NSString *key in keys.reverseObjectEnumerator)
     {
         [self didChangeValueForKey:key];
     }
     [self changed];
+}
+
+#pragma mark The assembled picture
+
+static NSArray *SizesOfPlaces(NSArray<RecorderPlace *> *places)
+{
+    // The size of each source if we know it
+    NSMutableArray *sizes = [NSMutableArray array];
+    for (RecorderPlace *place in places)
+    {
+        NSInteger width = place.width, height = place.height;
+        [sizes addObject:(width > 0 && height > 0) ? [NSValue valueWithSize:NSMakeSize(width, height)] : [NSNull null]];
+    }
+    return sizes;
+}
+
+- (LayoutKind)layoutKind
+{
+    LayoutKind kind = LayoutKindRow;
+    [Layout getKind:&kind forName:self.layout];
+    return kind;
+}
+
+- (Layout *)assembledLayout
+{
+    os_unfair_lock_lock(&_composeLock);
+    Layout *layout = _takeLayout;
+    os_unfair_lock_unlock(&_composeLock);
+    return layout ?: [[Layout alloc] initWithKind:[self layoutKind]
+                                      sourceSizes:SizesOfPlaces(self.places)
+                                              gap:self.gap
+                                      fittingSize:NSMakeSize(self.width, self.height)];
+}
+
+- (id<MTLTexture>)assembledFrame
+{
+    os_unfair_lock_lock(&_composeLock);
+    id<MTLTexture> frame = _assembledFrame;
+    os_unfair_lock_unlock(&_composeLock);
+    return frame;
+}
+
+// Main thread: the places or the settings which make the picture have changed
+- (void)compositionChanged
+{
+    NSArray<RecorderPlace *> *places = self.places;
+    MovieCodec codec = MovieCodecH264;
+    [MovieRecorderSettings getCodec:&codec forName:self.codec];
+    os_unfair_lock_lock(&_composeLock);
+    _composePlaces = places;
+    _composeKind = [self layoutKind];
+    _composeGap = self.gap;
+    _composeFittingSize = NSMakeSize(self.width, self.height);
+    // The picture is shown as it would be recorded
+    _composeTransparent = codec == MovieCodecProRes4444;
+    if (_clockPlace && ![places containsObject:_clockPlace])
+    {
+        _clockPlace = nil;
+    }
+    os_unfair_lock_unlock(&_composeLock);
+    // Shown at once: a picture which does not move sends no frame
+    [self composeMonitorAtTime:CACurrentMediaTime() wait:YES];
+}
+
+// Any thread. Composes the picture of the places as they are now. Once it is drawn it is the picture shown, and
+// handler is given it (on a thread of Metal's): only then can it be read with another command queue, as a movie's is.
+// NO if there is no picture: handler is not called.
+- (BOOL)composePlaces:(NSArray<RecorderPlace *> *)places
+               layout:(Layout *)layout
+          transparent:(BOOL)transparent
+                 with:(Compositor *)compositor
+               atTime:(NSTimeInterval)time
+                 then:(void (^)(id<MTLTexture> picture))handler
+{
+    NSMutableArray *textures = [NSMutableArray array];
+    NSMutableArray<NSNumber *> *flipped = [NSMutableArray array];
+    for (RecorderPlace *place in places)
+    {
+        // A source which is away leaves its place empty. One which is there and silent (a picture which does not
+        // move) keeps its last frame.
+        id<MTLTexture> frame = place.source ? place.latestFrame : nil;
+        [textures addObject:frame ? (id)frame : [NSNull null]];
+        [flipped addObject:@(place.flipped)];
+    }
+    os_unfair_lock_lock(&_composeLock);
+    _lastComposeTime = time;
+    os_unfair_lock_unlock(&_composeLock);
+
+    __weak RecorderController *weakSelf = self;
+    id<MTLTexture> picture = places.count == 0 ? nil : [compositor compose:layout textures:textures flipped:flipped transparent:transparent
+                                                              completionHandler:^(id<MTLTexture> drawn) {
+        [weakSelf showPicture:drawn];
+        if (handler)
+        {
+            handler(drawn);
+        }
+    }];
+    if (picture == nil)
+    {
+        // No source, or a picture too large to be composed: there is nothing to show
+        [self showPicture:nil];
+    }
+    return picture != nil;
+}
+
+- (void)showPicture:(id<MTLTexture>)picture
+{
+    os_unfair_lock_lock(&_composeLock);
+    _assembledFrame = picture;
+    os_unfair_lock_unlock(&_composeLock);
+}
+
+// Any thread. Composes the picture to show it: that of the take if one is recorded to an assembled movie.
+// wait: return once the picture is drawn.
+- (void)composeMonitorAtTime:(NSTimeInterval)time wait:(BOOL)wait
+{
+    os_unfair_lock_lock(&_composeLock);
+    NSArray<RecorderPlace *> *places = _composePlaces;
+    Layout *layout = _takeLayout;
+    BOOL transparent = layout ? _takeTransparent : _composeTransparent;
+    LayoutKind kind = _composeKind;
+    NSInteger gap = _composeGap;
+    NSSize fittingSize = _composeFittingSize;
+    os_unfair_lock_unlock(&_composeLock);
+    if (layout == nil)
+    {
+        layout = [[Layout alloc] initWithKind:kind sourceSizes:SizesOfPlaces(places) gap:gap fittingSize:fittingSize];
+    }
+    dispatch_semaphore_t drawn = wait ? dispatch_semaphore_create(0) : nil;
+    BOOL composed = [self composePlaces:places layout:layout transparent:transparent with:_monitorCompositor atTime:time then:^(id<MTLTexture> picture) {
+        if (drawn)
+        {
+            dispatch_semaphore_signal(drawn);
+        }
+    }];
+    if (drawn && composed)
+    {
+        dispatch_semaphore_wait(drawn, dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)));
+    }
+}
+
+// Called on a source's own thread, when a frame has arrived in its place
+- (void)place:(RecorderPlace *)place receivedFrameAtTime:(NSTimeInterval)time
+{
+    os_unfair_lock_lock(&_composeLock);
+    if (![_composePlaces containsObject:place])
+    {
+        os_unfair_lock_unlock(&_composeLock);
+        return;
+    }
+    // The pace is set by the first place which is delivering frames (-refresh sees to it). If that place has
+    // stopped, the next to deliver takes over without waiting to be told.
+    if (_clockPlace != place && (_clockPlace == nil || time - [_clockPlace lastFrameTime] > kOnlineTimeout))
+    {
+        _clockPlace = place;
+    }
+    BOOL setsThePace = _clockPlace == place;
+    NSArray<RecorderPlace *> *places = _composePlaces;
+    Layout *takeLayout = _takeLayout;
+    BOOL transparent = _takeTransparent;
+    BOOL monitorIsDue = time - _lastComposeTime >= kMonitorInterval;
+    os_unfair_lock_unlock(&_composeLock);
+    if (!setsThePace)
+    {
+        return;
+    }
+
+    if (takeLayout && [_take wantsAssembledFrameAtTime:time])
+    {
+        Take *take = _take;
+        [self composePlaces:places layout:takeLayout transparent:transparent with:_takeCompositor atTime:time then:^(id<MTLTexture> picture) {
+            [take appendAssembledTexture:picture atTime:time];
+        }];
+    }
+    else if (monitorIsDue)
+    {
+        [self composeMonitorAtTime:time wait:NO];
+    }
 }
 
 #pragma mark Places
@@ -595,6 +889,7 @@ static NSString *StringFrom(NSArray *arguments)
     }
     BOOL flipped = source.flipped;
     Take *take = _take;
+    __weak RecorderController *weakSelf = self;
     __weak RecorderPlace *weakPlace = place;
     // Called on the source's own thread: the frame goes to the place, which shows it, and to the place's movie if
     // a take is being recorded
@@ -610,6 +905,7 @@ static NSString *StringFrom(NSArray *arguments)
         {
             [take appendTexture:frame flipped:flipped fromSourceAtIndex:index atTime:now];
         }
+        [weakSelf place:strongPlace receivedFrameAtTime:now];
     };
     place.source = source;
 }
@@ -628,6 +924,7 @@ static NSString *StringFrom(NSArray *arguments)
     self.places = places;
     [_defaults setObject:[places valueForKey:@"title"] forKey:@"RecorderSources"];
     [self connectPlaces];
+    [self compositionChanged];
     [self changed];
 }
 
@@ -826,11 +1123,15 @@ static NSString *StringFrom(NSArray *arguments)
     settings.megabitsPerSecond = self.bitrate;
 
     // The size of each source if we know it, so that its movie is ready for its first frame
-    NSMutableArray *sizes = [NSMutableArray array];
-    for (RecorderPlace *place in places)
+    NSArray *sizes = SizesOfPlaces(places);
+
+    // The assembled picture is that of the sources as they are now, and stays so for the take
+    TakeOutput output = TakeOutputSeparate;
+    [Take getOutput:&output forName:self.output];
+    Layout *layout = nil;
+    if (output != TakeOutputSeparate)
     {
-        BOOL known = place.width > 0 && place.height > 0;
-        [sizes addObject:known ? [NSValue valueWithSize:NSMakeSize(place.width, place.height)] : [NSNull null]];
+        layout = [[Layout alloc] initWithKind:[self layoutKind] sourceSizes:sizes gap:self.gap fittingSize:NSMakeSize(self.width, self.height)];
     }
 
     NSString *name = self.name;
@@ -846,6 +1147,8 @@ static NSString *StringFrom(NSArray *arguments)
     NSError *error = nil;
     if (![_take startWithSourceTitles:[places valueForKey:@"title"]
                                 sizes:sizes
+                               output:output
+                        assembledSize:layout ? layout.size : NSZeroSize
                                  name:name
                                folder:[NSURL fileURLWithPath:self.folder isDirectory:YES]
                              settings:settings
@@ -855,12 +1158,18 @@ static NSString *StringFrom(NSArray *arguments)
         return [self failWithError:error.localizedDescription ?: @"The recording could not start"];
     }
 
+    // Assembled alone, the places have no movie
     NSArray<TakeMovie *> *movies = _take.movies;
     [places enumerateObjectsUsingBlock:^(RecorderPlace *place, NSUInteger index, BOOL *stop) {
-        place.movie = movies[index];
-        place.inTake = YES;
-        [place setTakeIndex:index];
+        BOOL hasMovie = index < movies.count;
+        place.movie = hasMovie ? movies[index] : nil;
+        place.inTake = hasMovie;
+        [place setTakeIndex:hasMovie ? index : NSNotFound];
     }];
+    os_unfair_lock_lock(&_composeLock);
+    _takeLayout = layout;
+    _takeTransparent = codec == MovieCodecProRes4444;
+    os_unfair_lock_unlock(&_composeLock);
 
     _startTime = now;
     // Not to be slowed down or put to sleep while we record
@@ -896,6 +1205,9 @@ static NSString *StringFrom(NSArray *arguments)
     {
         [place setTakeIndex:NSNotFound];
     }
+    os_unfair_lock_lock(&_composeLock);
+    _takeLayout = nil;
+    os_unfair_lock_unlock(&_composeLock);
     self.state = kStateFinishing;
     [self changed];
     __weak RecorderController *weakSelf = self;
@@ -904,11 +1216,19 @@ static NSString *StringFrom(NSArray *arguments)
     }];
 }
 
-// One movie has failed (a full disk, for instance): the others go on, unless none is left
+// Every movie of the take: the sources', then the assembled one
+- (NSArray<TakeMovie *> *)moviesOfTheTake
+{
+    TakeMovie *assembled = _take.assembledMovie;
+    return assembled ? [_take.movies arrayByAddingObject:assembled] : _take.movies;
+}
+
+// One movie has failed (a full disk, for instance): the others go on, unless none is left. index is NSNotFound
+// for the assembled movie.
 - (void)movieAtIndex:(NSUInteger)index failedWithError:(NSError *)error
 {
-    NSArray<TakeMovie *> *movies = _take.movies;
-    NSString *title = index < movies.count ? movies[index].sourceTitle : @"";
+    NSArray<TakeMovie *> *movies = [self moviesOfTheTake];
+    NSString *title = index < _take.movies.count ? _take.movies[index].sourceTitle : kAssembledMovieTitle;
     NSString *message = movies.count > 1 ? [NSString stringWithFormat:@"%@: %@", title, error.localizedDescription] : error.localizedDescription;
     self.error = message;
     self.recordingError = message;
@@ -938,13 +1258,14 @@ static NSString *StringFrom(NSArray *arguments)
     // A movie which failed during the take has said why already. One may also have failed as it was finished.
     if (self.recordingError.length == 0)
     {
-        NSArray<TakeMovie *> *movies = _take.movies;
+        NSArray<TakeMovie *> *movies = [self moviesOfTheTake];
         NSString *message = error.localizedDescription;
         for (TakeMovie *movie in movies)
         {
             if (message == nil && movie.error)
             {
-                message = movies.count > 1 ? [NSString stringWithFormat:@"%@: %@", movie.sourceTitle, movie.error.localizedDescription] : movie.error.localizedDescription;
+                NSString *title = movie.sourceTitle.length > 0 ? movie.sourceTitle : kAssembledMovieTitle;
+                message = movies.count > 1 ? [NSString stringWithFormat:@"%@: %@", title, movie.error.localizedDescription] : movie.error.localizedDescription;
             }
         }
         if (message)
@@ -1142,23 +1463,64 @@ static NSString *StringFrom(NSArray *arguments)
     };
     [parameters addObject:codec];
 
+    RecorderParameter *output = [self parameter:@"/output" type:@"s" summary:@"What a recording writes: separate (a movie for each source), assembled (one movie of the sources together), or both"];
+    output.range = ^{ return @[@{@"VALS": [Take outputNames]}]; };
+    output.get = ^{ return @[weakSelf.output ?: @""]; };
+    output.set = ^NSString *(NSArray *arguments) {
+        TakeOutput value;
+        NSString *name = StringFrom(arguments);
+        if (name == nil || ![Take getOutput:&value forName:name])
+        {
+            return [NSString stringWithFormat:@"“%@” is not one of %@", arguments.firstObject ?: @"", [[Take outputNames] componentsJoinedByString:@", "]];
+        }
+        weakSelf.output = name;
+        return nil;
+    };
+    [parameters addObject:output];
+
+    RecorderParameter *layout = [self parameter:@"/layout" type:@"s" summary:@"How the sources are assembled, in their order: row (side by side), column (stacked), grid (a mosaic), focus (the first large, the others beside it)"];
+    layout.range = ^{ return @[@{@"VALS": [Layout kindNames]}]; };
+    layout.get = ^{ return @[weakSelf.layout ?: @""]; };
+    layout.set = ^NSString *(NSArray *arguments) {
+        LayoutKind kind;
+        NSString *name = StringFrom(arguments);
+        if (name == nil || ![Layout getKind:&kind forName:name])
+        {
+            return [NSString stringWithFormat:@"“%@” is not one of %@", arguments.firstObject ?: @"", [[Layout kindNames] componentsJoinedByString:@", "]];
+        }
+        weakSelf.layout = name;
+        return nil;
+    };
+    [parameters addObject:layout];
+
+    RecorderParameter *assembledWidth = [self parameter:@"/status/assembled/width" type:@"i" summary:@"Width of the assembled picture as it is now, or of the take being recorded"];
+    assembledWidth.get = ^{ return @[@(weakSelf.places.count > 0 ? (NSInteger)weakSelf.assembledLayout.size.width : 0)]; };
+    RecorderParameter *assembledHeight = [self parameter:@"/status/assembled/height" type:@"i" summary:@"Height of the assembled picture as it is now, or of the take being recorded"];
+    assembledHeight.get = ^{ return @[@(weakSelf.places.count > 0 ? (NSInteger)weakSelf.assembledLayout.size.height : 0)]; };
+
     [parameters addObjectsFromArray:@[
-        [self numberParameter:@"/width" type:@"i" summary:@"Width of the assembled movie in pixels, 0 for automatic. A source's own movie is the size of the source."
+        [self numberParameter:@"/gap" type:@"i" summary:@"Pixels between the sources in the assembled picture" key:@"gap" maximum:kMaximumGap],
+        assembledWidth,
+        assembledHeight,
+        [self statusParameter:@"/status/assembled/file" type:@"s" summary:@"The assembled movie, being written or last written. Empty if there is none." key:@"assembledFile"],
+        [self statusParameter:@"/status/assembled/frames" type:@"i" summary:@"Frames written to the assembled movie" key:@"assembledFrames"],
+        [self statusParameter:@"/status/assembled/dropped" type:@"i" summary:@"Pictures lost because the encoder of the assembled movie could not keep up" key:@"assembledDropped"],
+        [self numberParameter:@"/width" type:@"i" summary:@"Width the assembled picture is fitted into, in pixels. 0 (or a height of 0) for the size the sources need. A source's own movie is the size of the source."
                           key:@"width" maximum:kMaximumDimension],
-        [self numberParameter:@"/height" type:@"i" summary:@"Height of the assembled movie in pixels, 0 for automatic. A source's own movie is the size of the source."
+        [self numberParameter:@"/height" type:@"i" summary:@"Height the assembled picture is fitted into, in pixels. 0 (or a width of 0) for the size the sources need. A source's own movie is the size of the source."
                           key:@"height" maximum:kMaximumDimension],
         [self numberParameter:@"/fps" type:@"f" summary:@"The most frames the movies have each second. 0 keeps every frame of the sources."
                           key:@"fps" maximum:kMaximumFramesPerSecond],
         [self numberParameter:@"/bitrate" type:@"f" summary:@"Megabits per second for h264 and hevc. 0 chooses from the size and frame rate."
                           key:@"bitrate" maximum:kMaximumMegabitsPerSecond],
         [self stringParameter:@"/folder" summary:@"The folder movies are written to" key:@"folder"],
-        [self stringParameter:@"/name" summary:@"The name of the recording, without extension. Empty for the app's name and the date. With several sources, each movie adds its source's title."
+        [self stringParameter:@"/name" summary:@"The name of the recording, without extension: the assembled movie's. Empty for the app's name and the date. A source's own movie adds its source's title, unless it is the only movie."
                           key:@"name"],
         [self statusParameter:@"/status/state" type:@"s" summary:@"idle, recording, or finishing while the movies are completed" key:@"state"],
         [self statusParameter:@"/status/elapsed" type:@"f" summary:@"Seconds recorded" key:@"elapsed"],
-        [self statusParameter:@"/status/frames" type:@"i" summary:@"Frames written to the first source's movie" key:@"frames"],
+        [self statusParameter:@"/status/frames" type:@"i" summary:@"Frames written to the assembled movie or, if there is none, to the first source's" key:@"frames"],
         [self statusParameter:@"/status/dropped" type:@"i" summary:@"Frames lost in all the movies because the encoder could not keep up" key:@"dropped"],
-        [self statusParameter:@"/status/file" type:@"s" summary:@"The first source's movie, being written or last written" key:@"file"],
+        [self statusParameter:@"/status/file" type:@"s" summary:@"The assembled movie or, if there is none, the first source's: being written or last written" key:@"file"],
         [self statusParameter:@"/status/error" type:@"s" summary:@"The last error. Empty when a recording starts." key:@"error"],
         [self statusParameter:@"/status/failure" type:@"s" summary:@"Why the last recording ended, if it failed or had nothing to write. Empty otherwise."
                           key:@"recordingError"]

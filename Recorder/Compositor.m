@@ -31,6 +31,8 @@
 
 // How many pictures there are to draw to in turn: one more than can be waiting to be encoded
 static const NSUInteger kTargets = 4;
+// The largest picture Metal can hold, on a side
+static const CGFloat kLargestSide = 16384;
 
 static NSString * const kShaderSource = @"\
 #include <metal_stdlib>\n\
@@ -112,10 +114,24 @@ fragment float4 sourceFragment(Vertex in [[stage_in]], texture2d<float> source [
                   flipped:(NSArray<NSNumber *> *)flipped
               transparent:(BOOL)transparent
 {
+    return [self compose:layout textures:textures flipped:flipped transparent:transparent completionHandler:nil];
+}
+
+- (id<MTLTexture>)compose:(Layout *)layout
+                 textures:(NSArray *)textures
+                  flipped:(NSArray<NSNumber *> *)flipped
+              transparent:(BOOL)transparent
+        completionHandler:(void (^)(id<MTLTexture> picture))handler
+{
     NSArray<NSValue *> *frames = layout.frames;
     NSSize size = layout.size;
     if (textures.count != frames.count || flipped.count != frames.count || size.width < 1.0 || size.height < 1.0)
     {
+        return nil;
+    }
+    if (size.width > kLargestSide || size.height > kLargestSide)
+    {
+        // No texture can be that large
         return nil;
     }
 
@@ -147,6 +163,19 @@ fragment float4 sourceFragment(Vertex in [[stage_in]], texture2d<float> source [
         }
         // The source's rectangle, from pixels counted from the top left to Metal's coordinates, where y goes up
         NSRect frame = frames[index].rectValue;
+        // A source which is no longer the shape of its place (its window was resized after the layout was made)
+        // is fitted in it, centred, rather than stretched
+        CGFloat width = [texture width], height = [texture height];
+        CGFloat fitted = NSHeight(frame) * width / height;
+        if (fitted < NSWidth(frame) - 1.0)
+        {
+            frame = NSMakeRect(NSMinX(frame) + floor((NSWidth(frame) - fitted) / 2.0), NSMinY(frame), round(fitted), NSHeight(frame));
+        }
+        else if (fitted > NSWidth(frame) + 1.0)
+        {
+            CGFloat fittedHeight = NSWidth(frame) * height / width;
+            frame = NSMakeRect(NSMinX(frame), NSMinY(frame) + floor((NSHeight(frame) - fittedHeight) / 2.0), NSWidth(frame), round(fittedHeight));
+        }
         float left = NSMinX(frame) / size.width * 2.0 - 1.0, right = NSMaxX(frame) / size.width * 2.0 - 1.0;
         float top = 1.0 - NSMinY(frame) / size.height * 2.0, bottom = 1.0 - NSMaxY(frame) / size.height * 2.0;
         float topV = flipped[index].boolValue ? 1.0 : 0.0, bottomV = 1.0 - topV;
@@ -162,6 +191,12 @@ fragment float4 sourceFragment(Vertex in [[stage_in]], texture2d<float> source [
         [encoder drawPrimitives:MTLPrimitiveTypeTriangleStrip vertexStart:0 vertexCount:4];
     }
     [encoder endEncoding];
+    if (handler)
+    {
+        [commandBuffer addCompletedHandler:^(id<MTLCommandBuffer> buffer) {
+            handler(target);
+        }];
+    }
     [commandBuffer commit];
     [_lock unlock];
     return target;

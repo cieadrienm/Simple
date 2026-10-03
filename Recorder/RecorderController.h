@@ -30,6 +30,7 @@
 #import <Foundation/Foundation.h>
 #import <Metal/Metal.h>
 #import "FrameSource.h"
+#import "Layout.h"
 #import "OSCMessage.h"
 
 NS_ASSUME_NONNULL_BEGIN
@@ -62,7 +63,7 @@ extern const NSUInteger RecorderMaximumPlaces;
 @end
 
 /*
- Records the sources chosen, each to its own movie.
+ Records the sources chosen: each to its own movie, all in one movie in which they are assembled, or both.
 
  Everything the recorder can do is a parameter with an OSC address: the properties below are those parameters, the
  window shows them, OSC messages set them, and OSCQuery describes and reads them. See -startNetworkWithOSCPort:...
@@ -79,12 +80,16 @@ extern const NSUInteger RecorderMaximumPlaces;
 
 // Settings. They are saved in the defaults, and a change applies to the next recording.
 @property (nonatomic, copy) NSString *codec;      // /codec: one of +[MovieRecorderSettings codecNames]
-@property (nonatomic, assign) NSInteger width;    // /width, /height: kept for the assembled movie; a source's
-@property (nonatomic, assign) NSInteger height;   //   own movie is always the size of the source
+@property (nonatomic, assign) NSInteger width;    // /width, /height: the size the assembled picture is fitted into, 0 for
+@property (nonatomic, assign) NSInteger height;   //   automatic; a source's own movie is always the size of the source
 @property (nonatomic, assign) double fps;         // /fps: 0 for every frame of the source
 @property (nonatomic, assign) double bitrate;     // /bitrate: megabits per second, 0 for automatic
 @property (nonatomic, copy) NSString *folder;     // /folder
 @property (nonatomic, copy) NSString *name;       // /name: empty for the app's name and the date
+// What a take writes, and how the sources are assembled. A name which does not exist changes nothing.
+@property (nonatomic, copy) NSString *output;     // /output: one of +[Take outputNames]: "separate", "assembled", "both"
+@property (nonatomic, copy) NSString *layout;     // /layout: one of +[Layout kindNames]: "row", "column", "grid", "focus"
+@property (nonatomic, assign) NSInteger gap;      // /gap: pixels between sources in the assembled picture
 
 // The sources chosen, in order: /source/1 … /source/8 (and /source, which is /source/1). They are saved in the
 // defaults. Only these are connected to. They cannot be changed while recording.
@@ -106,9 +111,22 @@ extern const NSUInteger RecorderMaximumPlaces;
 @property (readonly, copy) NSString *state;       // /status/state: "idle", "recording" or "finishing"
 @property (readonly, getter=isRecording) BOOL recording;
 @property (readonly) NSTimeInterval elapsed;      // /status/elapsed
-@property (readonly) NSUInteger frames;           // /status/frames: frames of the first place's movie
+// /status/frames and /status/file: of the assembled movie if the take (being recorded, or the last) has one, of the
+// first place's movie otherwise
+@property (readonly) NSUInteger frames;
 @property (readonly) NSUInteger dropped;          // /status/dropped: frames dropped in all the movies
-@property (readonly, copy) NSString *file;        // /status/file: the first place's movie
+@property (readonly, copy) NSString *file;
+
+// The assembled picture: that of the take while one is recorded to an assembled movie (it does not change during
+// the take), otherwise that of the settings and of the sources as they are.
+@property (readonly) Layout *assembledLayout;                   // /status/assembled/width, /height: its size
+// The last picture composed, to show it: its first row is the top. nil if there is no source, or if the picture is
+// too large to be composed.
+@property (readonly, nullable) id<MTLTexture> assembledFrame;
+// The assembled movie of the take being recorded, or of the last one
+@property (readonly, copy) NSString *assembledFile;             // /status/assembled/file: empty if there is none
+@property (readonly) NSUInteger assembledFrames;                // /status/assembled/frames
+@property (readonly) NSUInteger assembledDropped;               // /status/assembled/dropped
 @property (nonatomic, readonly, copy) NSString *error; // /status/error: the last error, empty when a recording starts
 // How many errors there have been: it changes when an error happens again, which error alone does not show
 @property (readonly) NSUInteger errorCount;

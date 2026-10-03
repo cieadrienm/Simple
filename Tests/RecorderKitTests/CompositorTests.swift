@@ -166,4 +166,53 @@ final class CompositorTests: XCTestCase {
         let row = layout(.row, [small, small])
         XCTAssertNil(compositor.compose(row, textures: [texture(64, 48, red)], flipped: [false], transparent: false))
     }
+
+    func testASourceWhichIsNotTheShapeOfItsPlaceIsFittedInIt() throws {
+        // The places are made for two sources of 64 × 48; the first is now square (its window was resized)
+        let row = layout(.row, [small, small])
+        let pixel = pixels(try compose(row, [texture(48, 48, red), texture(64, 48, green)]))
+        assertEqual(pixel(32, 24), red, "centred in its place")
+        assertEqual(pixel(9, 24), red, "its left edge")
+        assertEqual(pixel(54, 24), red, "its right edge")
+        assertEqual(pixel(3, 24), black, "the bar on its left")
+        assertEqual(pixel(60, 24), black, "the bar on its right")
+        assertEqual(pixel(70, 24), green, "the second is where it was")
+        // Wider than its place: bars above and below
+        let wide = pixels(try compose(row, [texture(128, 48, red), texture(64, 48, green)]))
+        assertEqual(wide(32, 24), red)
+        assertEqual(wide(32, 5), black)
+        assertEqual(wide(32, 42), black)
+        assertEqual(wide(2, 24), red)
+    }
+
+    func testAPictureLargerThanATextureCanBeIsNotComposed() {
+        let huge = layout(.row, [NSSize(width: 20000, height: 48)])
+        XCTAssertNil(compositor.compose(huge, textures: [NSNull()], flipped: [false], transparent: false))
+    }
+
+    func testTheHandlerIsCalledOnceThePictureIsDrawn() throws {
+        let row = layout(.row, [small, small])
+        let drawn = expectation(description: "drawn")
+        let picture = try XCTUnwrap(compositor.compose(row, textures: [texture(64, 48, red), texture(64, 48, green)], flipped: [false, false],
+                                                       transparent: false) { _ in drawn.fulfill() })
+        wait(for: [drawn], timeout: 5)
+        // Read with a queue of its own, as a recorder does: the picture is there
+        let other = try XCTUnwrap(device.makeCommandQueue())
+        let buffer = device.makeBuffer(length: picture.width * 4 * picture.height, options: .storageModeShared)!
+        let commands = other.makeCommandBuffer()!
+        let blit = commands.makeBlitCommandEncoder()!
+        blit.copy(from: picture, sourceSlice: 0, sourceLevel: 0, sourceOrigin: MTLOrigin(x: 0, y: 0, z: 0),
+                  sourceSize: MTLSize(width: picture.width, height: picture.height, depth: 1),
+                  to: buffer, destinationOffset: 0, destinationBytesPerRow: picture.width * 4, destinationBytesPerImage: picture.width * 4 * picture.height)
+        blit.endEncoding()
+        commands.commit()
+        commands.waitUntilCompleted()
+        let bytes = buffer.contents().assumingMemoryBound(to: UInt8.self)
+        XCTAssertEqual(bytes[(24 * picture.width + 32) * 4 + 2], 255, "red in the first place")
+        XCTAssertEqual(bytes[(24 * picture.width + 96) * 4 + 1], 255, "green in the second")
+
+        // No picture, no call
+        let huge = layout(.row, [NSSize(width: 20000, height: 48)])
+        XCTAssertNil(compositor.compose(huge, textures: [NSNull()], flipped: [false], transparent: false) { _ in XCTFail("called without a picture") })
+    }
 }

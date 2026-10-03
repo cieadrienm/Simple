@@ -33,6 +33,8 @@ final class FakeDirectory: NSObject, SourceDirectory {
     private(set) var dead = Set<Int>()
     /// Every source ever connected to, the latest last
     private(set) var connections: [FakeSource] = []
+    /// The titles of the sources whose frames have their first row at the bottom, as Syphon's
+    var flippedTitles = Set<String>()
 
     init(_ titles: [String]) { self.titles = titles }
 
@@ -46,6 +48,7 @@ final class FakeDirectory: NSObject, SourceDirectory {
         let source = FakeSource(title: title)
         source.entry = entry
         source.directory = self
+        source.flipped = flippedTitles.contains(title)
         connections.append(source)
         return source
     }
@@ -712,6 +715,407 @@ final class RecorderControllerTests: XCTestCase {
         wait(for: [announced], timeout: 2)
     }
 
+    // MARK: The assembled picture
+
+    private let a = "A - Simple Server", b = "B - Simple Server", depth = "depthMap - eMotion"
+    private let red: [UInt8] = [0, 0, 255, 255], green: [UInt8] = [0, 255, 0, 255], blue: [UInt8] = [255, 0, 0, 255]
+
+    private func tick(_ titles: [String]) {
+        for title in titles { XCTAssertTrue(controller.addSource(matching: title)) }
+    }
+
+    /// A texture of one colour (blue, green, red, alpha); with `bottom`, its last rows are of that colour.
+    private func solid(_ width: Int, _ height: Int, _ colour: [UInt8], bottom: [UInt8]? = nil) -> MTLTexture {
+        let texture = makeTexture(width, height)
+        var pixels = [UInt8](repeating: 0, count: width * height * 4)
+        for y in 0..<height {
+            let pixel = (y >= height / 2 ? bottom : nil) ?? colour
+            for x in 0..<width {
+                for channel in 0..<4 { pixels[(y * width + x) * 4 + channel] = pixel[channel] }
+            }
+        }
+        texture.replace(region: MTLRegionMake2D(0, 0, width, height), mipmapLevel: 0, withBytes: pixels, bytesPerRow: width * 4)
+        return texture
+    }
+
+    /// Reads a movie's pictures: the first, or the last. The answer gives a pixel as blue, green, red, alpha.
+    private func picture(_ url: URL, last: Bool = false) throws -> (Int, Int) -> [UInt8] {
+        let asset = AVURLAsset(url: url)
+        let reader = try AVAssetReader(asset: asset)
+        let output = AVAssetReaderTrackOutput(track: try MovieInfo.videoTrack(asset), outputSettings: [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA])
+        reader.add(output)
+        reader.startReading()
+        var buffer: CVPixelBuffer?
+        // The movie starts with the take, its pictures with its first frame: until then the reader gives a black one
+        let start = try MovieInfo(url).start
+        while let sample = output.copyNextSampleBuffer() {
+            guard CMSampleBufferGetPresentationTimeStamp(sample).seconds >= start - 0.001 else { continue }
+            if let image = CMSampleBufferGetImageBuffer(sample) { buffer = image }
+            if !last && buffer != nil { break }
+        }
+        let image = try XCTUnwrap(buffer)
+        CVPixelBufferLockBaseAddress(image, .readOnly)
+        defer { CVPixelBufferUnlockBaseAddress(image, .readOnly) }
+        let rowBytes = CVPixelBufferGetBytesPerRow(image)
+        let data = Data(bytes: CVPixelBufferGetBaseAddress(image)!, count: rowBytes * CVPixelBufferGetHeight(image))
+        return { x, y in (0..<4).map { data[y * rowBytes + x * 4 + $0] } }
+    }
+
+    /// Movies are compressed: a colour comes back nearly as it was.
+    private func assertColour(_ pixel: [UInt8], _ expected: [UInt8], _ message: String = "", file: StaticString = #filePath, line: UInt = #line) {
+        let close = zip(pixel, expected).prefix(3).allSatisfy { abs(Int($0) - Int($1)) <= 40 }
+        XCTAssertTrue(close, "\(message) got \(pixel), expected \(expected)", file: file, line: line)
+    }
+
+    private func size(_ width: Int, _ height: Int) -> CGSize { CGSize(width: width, height: height) }
+
+    private func settle() { RunLoop.main.run(until: Date().addingTimeInterval(0.3)) }
+
+    func testDefaultsAreSeparateAndRow() {
+        XCTAssertEqual(controller.output, "separate")
+        XCTAssertEqual(controller.layout, "row")
+        XCTAssertEqual(controller.gap, 0)
+        XCTAssertNil(controller.assembledFrame)
+        XCTAssertEqual(controller.assembledFile, "")
+    }
+
+    func testOSCSetsOutputLayoutAndGap() {
+        send("/output", "Both")
+        send("/layout", "grid")
+        send("/gap", NSNumber(value: 12))
+        XCTAssertEqual(controller.output, "both")
+        XCTAssertEqual(controller.layout, "grid")
+        XCTAssertEqual(controller.gap, 12)
+        XCTAssertEqual(controller.error, "")
+
+        send("/output", "mosaic")
+        XCTAssertEqual(controller.output, "both")
+        XCTAssertTrue(controller.error.contains("/output") && controller.error.contains("separate, assembled, both"), controller.error)
+        send("/layout", "diagonal")
+        XCTAssertEqual(controller.layout, "grid")
+        XCTAssertTrue(controller.error.contains("/layout") && controller.error.contains("row, column, grid, focus"), controller.error)
+        send("/gap", "wide")
+        XCTAssertTrue(controller.error.contains("/gap"), controller.error)
+
+        send("/gap", NSNumber(value: -5))
+        XCTAssertEqual(controller.gap, 0)
+        send("/gap", NSNumber(value: 100_000))
+        XCTAssertEqual(controller.gap, 1000)
+        // Set from the window, a name which does not exist changes nothing
+        controller.output = "mosaic"
+        controller.layout = "diagonal"
+        XCTAssertEqual(controller.output, "both")
+        XCTAssertEqual(controller.layout, "grid")
+    }
+
+    func testTheySurviveARelaunch() {
+        send("/output", "assembled")
+        send("/layout", "focus")
+        send("/gap", NSNumber(value: 8))
+        let next = RecorderController(device: device, directory: directory, defaults: defaults)
+        XCTAssertEqual(next.output, "assembled")
+        XCTAssertEqual(next.layout, "focus")
+        XCTAssertEqual(next.gap, 8)
+    }
+
+    func testAssembledLayoutFollowsThePlacesAndTheSettings() {
+        XCTAssertEqual(controller.assembledLayout.frames, [])
+        tick([a, b])
+        deliverFrames(for: 0.1, from: [(a, makeTexture(640, 360)), (b, makeTexture(320, 360))])
+        XCTAssertEqual(controller.assembledLayout.size, size(960, 360))
+        XCTAssertEqual(controller.assembledLayout.frames.map(\.rectValue), [NSRect(x: 0, y: 0, width: 640, height: 360), NSRect(x: 640, y: 0, width: 320, height: 360)])
+        send("/layout", "column")
+        XCTAssertEqual(controller.assembledLayout.size, size(640, 1080))
+        send("/layout", "row")
+        send("/gap", NSNumber(value: 20))
+        XCTAssertEqual(controller.assembledLayout.size, size(980, 360))
+        send("/gap", NSNumber(value: 0))
+        send("/width", NSNumber(value: 480))
+        send("/height", NSNumber(value: 270))
+        XCTAssertEqual(controller.assembledLayout.size, size(480, 270))
+        XCTAssertEqual(controller.assembledLayout.frames.map(\.rectValue.size.width), [320, 160])
+        // A source never seen counts as 1920 × 1080
+        send("/width", NSNumber(value: 0))
+        tick([depth])
+        XCTAssertEqual(controller.assembledLayout.size, size(1920 + 960 + 1920, 1080))
+    }
+
+    func testAPictureIsComposedForTheMonitorWhenIdle() throws {
+        tick([a, b])
+        deliverFrames(for: 0.2, from: [(a, makeTexture(640, 360)), (b, makeTexture(320, 360))])
+        let frame = try XCTUnwrap(controller.assembledFrame)
+        XCTAssertEqual(frame.width, 960)
+        XCTAssertEqual(frame.height, 360)
+        // It follows the layout without waiting for a frame: a picture which does not move sends none
+        send("/layout", "column")
+        XCTAssertEqual(controller.assembledFrame?.height, 1080)
+        // No source, no picture
+        send("/source/1", "")
+        send("/source/1", "")
+        XCTAssertNil(controller.assembledFrame)
+    }
+
+    func testAssembledWritesOneMovie() throws {
+        tick([a, b, depth])
+        send("/name", "show")
+        send("/output", "assembled")
+        deliverFrames(for: 0.1, from: [(a, makeTexture(640, 360)), (b, makeTexture(320, 360)), (depth, makeTexture(160, 360))])
+        XCTAssertTrue(controller.start())
+        deliverFrames(for: 0.5, from: [(a, makeTexture(640, 360)), (b, makeTexture(320, 360)), (depth, makeTexture(160, 360))])
+        settle()
+        XCTAssertGreaterThan(controller.assembledFrames, 10)
+        XCTAssertEqual(controller.frames, controller.assembledFrames)
+        stopAndWait()
+        XCTAssertEqual(controller.error, "")
+
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: folder.path), ["show.mov"])
+        let movie = folder.appendingPathComponent("show.mov")
+        XCTAssertEqual(try MovieInfo(movie).size, size(1120, 360))
+        XCTAssertEqual(controller.places.map(\.file), ["", "", ""])
+        XCTAssertEqual(controller.places.map(\.frames), [0, 0, 0])
+        XCTAssertEqual(controller.file, movie.path)
+        XCTAssertEqual(controller.assembledFile, movie.path)
+        XCTAssertGreaterThan(controller.assembledFrames, 10)
+    }
+
+    func testBothWritesEverything() throws {
+        tick([a, b])
+        send("/name", "show")
+        send("/output", "both")
+        deliverFrames(for: 0.1, from: [(a, makeTexture(640, 360)), (b, makeTexture(320, 360))])
+        XCTAssertTrue(controller.start())
+        deliverFrames(for: 0.5, from: [(a, makeTexture(640, 360)), (b, makeTexture(320, 360))])
+        stopAndWait()
+        XCTAssertEqual(controller.error, "")
+
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: folder.path).sorted(), ["show — A - Simple Server.mov", "show — B - Simple Server.mov", "show.mov"])
+        XCTAssertEqual(controller.file, folder.appendingPathComponent("show.mov").path)
+        XCTAssertEqual(controller.assembledFile, controller.file)
+        XCTAssertEqual(controller.places.map { URL(fileURLWithPath: $0.file).lastPathComponent }, ["show — A - Simple Server.mov", "show — B - Simple Server.mov"])
+        XCTAssertEqual(try MovieInfo(URL(fileURLWithPath: controller.file)).size, size(960, 360))
+        XCTAssertEqual(try MovieInfo(URL(fileURLWithPath: controller.places[1].file)).size, size(320, 360))
+        XCTAssertGreaterThan(controller.places[1].frames, 10)
+        XCTAssertGreaterThan(controller.assembledFrames, 10)
+    }
+
+    func testOneSourceInBothIsNamedAfterItsTitleBesideTheAssembledMovie() throws {
+        tick([a])
+        send("/name", "show")
+        send("/output", "both")
+        XCTAssertTrue(controller.start())
+        deliverFrames(for: 0.3)
+        stopAndWait()
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: folder.path).sorted(), ["show — A - Simple Server.mov", "show.mov"])
+    }
+
+    func testThePictureHasEachSourceInItsPlace() throws {
+        // The first as Syphon delivers: its first row is the bottom of the picture, which is red above and blue below
+        directory.flippedTitles = [a]
+        tick([a, b, depth])
+        send("/output", "assembled")
+        send("/name", "show")
+        let pictures = [(a, solid(64, 48, blue, bottom: red)), (b, solid(64, 48, green)), (depth, solid(64, 48, blue))]
+        deliverFrames(for: 0.1, from: pictures)
+        XCTAssertTrue(controller.start())
+        deliverFrames(for: 0.4, from: pictures)
+        stopAndWait()
+
+        let pixel = try picture(folder.appendingPathComponent("show.mov"))
+        assertColour(pixel(32, 10), red, "the top of the first source")
+        assertColour(pixel(32, 38), blue, "the bottom of the first source")
+        assertColour(pixel(96, 24), green, "the second source")
+        assertColour(pixel(160, 24), blue, "the third source")
+    }
+
+    func testASourceWhichIsAwayLeavesItsPlaceBlack() throws {
+        tick([a, b])
+        // B's application quits before it was ever seen: it keeps its place, as large as a source never seen
+        directory.setTitles([a])
+        XCTAssertEqual(titles, [a, b])
+        send("/output", "assembled")
+        send("/name", "show")
+        XCTAssertTrue(controller.start())
+        deliverFrames(for: 0.4, from: [(a, solid(192, 108, red))])
+        stopAndWait()
+        XCTAssertEqual(controller.error, "")
+
+        let movie = folder.appendingPathComponent("show.mov")
+        XCTAssertEqual(try MovieInfo(movie).size, size(3840, 1080))
+        let pixel = try picture(movie)
+        assertColour(pixel(960, 540), red, "the source which is there")
+        assertColour(pixel(2880, 540), [0, 0, 0, 255], "the place of the source which is away")
+    }
+
+    func testASourceWhichChangesSizeStaysInItsPlace() throws {
+        tick([a, b])
+        send("/output", "assembled")
+        send("/name", "show")
+        deliverFrames(for: 0.1, from: [(a, solid(64, 48, red)), (b, solid(64, 48, green))])
+        XCTAssertTrue(controller.start())
+        deliverFrames(for: 0.3, from: [(a, solid(64, 48, red)), (b, solid(64, 48, green))])
+        // A's window is resized: it is square now
+        deliverFrames(for: 0.3, from: [(a, solid(48, 48, red)), (b, solid(64, 48, green))])
+        XCTAssertEqual(controller.places[0].width, 48)
+        XCTAssertEqual(controller.assembledLayout.size, size(128, 48), "the take's picture does not change")
+        stopAndWait()
+        XCTAssertEqual(controller.error, "")
+        XCTAssertEqual(controller.assembledLayout.size, size(112, 48), "the next take's will be as the sources are now")
+
+        let movie = folder.appendingPathComponent("show.mov")
+        XCTAssertEqual(try MovieInfo(movie).size, size(128, 48))
+        let pixel = try picture(movie, last: true)
+        assertColour(pixel(32, 24), red, "the source, in its place")
+        assertColour(pixel(2, 24), [0, 0, 0, 255], "fitted, not stretched")
+        assertColour(pixel(96, 24), green, "its neighbour has not moved")
+    }
+
+    func testTheNextSourceDrivesThePictureWhenTheFirstGoesAway() throws {
+        tick([a, b])
+        send("/output", "assembled")
+        send("/name", "show")
+        deliverFrames(for: 0.1, from: [(a, solid(64, 48, red)), (b, solid(64, 48, green))])
+        XCTAssertTrue(controller.start())
+        deliverFrames(for: 0.3, from: [(a, solid(64, 48, red)), (b, solid(64, 48, green))])
+        settle()
+        let before = controller.assembledFrames
+        XCTAssertGreaterThan(before, 5)
+        // A's application is killed: only B delivers
+        directory.kill(entry: 2)
+        deliverFrames(for: 3.0, from: [(b, solid(64, 48, green))])
+        settle()
+        XCTAssertGreaterThan(controller.assembledFrames, before + 40, "the picture is driven by the source which is left")
+        stopAndWait()
+        XCTAssertEqual(controller.error, "")
+
+        let movie = folder.appendingPathComponent("show.mov")
+        XCTAssertGreaterThan(try MovieInfo(movie).duration, 3.2)
+        let pixel = try picture(movie, last: true)
+        assertColour(pixel(96, 24), green)
+        assertColour(pixel(32, 24), [0, 0, 0, 255], "the place of the source which has gone is black once it is known to be gone")
+    }
+
+    func testChangingTheLayoutWhileRecordingAppliesToTheNextTake() throws {
+        tick([a, b])
+        send("/output", "assembled")
+        send("/name", "show")
+        deliverFrames(for: 0.1, from: [(a, makeTexture(64, 48)), (b, makeTexture(64, 48))])
+        XCTAssertTrue(controller.start())
+        deliverFrames(for: 0.2, from: [(a, makeTexture(64, 48)), (b, makeTexture(64, 48))])
+        send("/layout", "column")
+        send("/gap", NSNumber(value: 10))
+        send("/output", "both")
+        XCTAssertEqual(controller.error, "", "they can be set while recording")
+        XCTAssertEqual(controller.assembledLayout.size, size(128, 48), "the take keeps the picture it started with")
+        deliverFrames(for: 0.2, from: [(a, makeTexture(64, 48)), (b, makeTexture(64, 48))])
+        XCTAssertEqual(controller.assembledFrame?.width, 128)
+        stopAndWait()
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: folder.path), ["show.mov"])
+        XCTAssertEqual(try MovieInfo(folder.appendingPathComponent("show.mov")).size, size(128, 48))
+
+        XCTAssertEqual(controller.assembledLayout.size, size(64, 106))
+        XCTAssertTrue(controller.start())
+        deliverFrames(for: 0.3, from: [(a, makeTexture(64, 48)), (b, makeTexture(64, 48))])
+        stopAndWait()
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: folder.path).sorted(),
+                       ["show 2 — A - Simple Server.mov", "show 2 — B - Simple Server.mov", "show 2.mov", "show.mov"])
+        XCTAssertEqual(try MovieInfo(folder.appendingPathComponent("show 2.mov")).size, size(64, 106))
+    }
+
+    func testAPictureTooLargeIsRefusedAtTheStart() throws {
+        tick([a, b])
+        // Two sources as wide as a texture can be: side by side they are more than any can hold
+        deliverFrames(for: 0.1, from: [(a, makeTexture(16384, 16)), (b, makeTexture(16384, 16))])
+        XCTAssertEqual(controller.assembledLayout.size, size(32768, 16))
+        XCTAssertNil(controller.assembledFrame, "it cannot be shown either")
+        send("/output", "both")
+        XCTAssertFalse(controller.start())
+        XCTAssertTrue(controller.error.contains("32768") && controller.error.contains("smaller size"), controller.error)
+        XCTAssertEqual(controller.state, "idle")
+        XCTAssertEqual(controller.places.map(\.file), ["", ""])
+        XCTAssertEqual(controller.assembledFile, "")
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: folder.path), [])
+        // Fitted into a size, it is written
+        send("/width", NSNumber(value: 4096))
+        send("/height", NSNumber(value: 64))
+        XCTAssertTrue(controller.start())
+        deliverFrames(for: 0.2, from: [(a, makeTexture(16384, 16)), (b, makeTexture(16384, 16))])
+        stopAndWait()
+        XCTAssertEqual(controller.error, "")
+        XCTAssertEqual(try MovieInfo(URL(fileURLWithPath: controller.assembledFile)).size, size(4096, 64))
+    }
+
+    func testTheAssembledMovieFailingIsReported() throws {
+        // A small disk of its own, which the assembled movie fills
+        let image = folder.appendingPathComponent("small.dmg")
+        let volume = folder.appendingPathComponent("volume")
+        try FileManager.default.createDirectory(at: volume, withIntermediateDirectories: true)
+        func hdiutil(_ arguments: [String]) throws {
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/hdiutil")
+            process.arguments = arguments
+            process.standardOutput = FileHandle.nullDevice
+            process.standardError = FileHandle.nullDevice
+            try process.run()
+            process.waitUntilExit()
+            try XCTSkipIf(process.terminationStatus != 0, "hdiutil \(arguments.first ?? "") failed")
+        }
+        try hdiutil(["create", "-size", "12m", "-fs", "HFS+", "-volname", "RecorderTest", image.path])
+        try hdiutil(["attach", "-nobrowse", "-mountpoint", volume.path, image.path])
+        defer { try? hdiutil(["detach", "-force", volume.path]) }
+
+        controller.folder = volume.path
+        tick([a])
+        send("/codec", "prores4444")
+        send("/output", "assembled")
+        XCTAssertTrue(controller.start())
+        // Noise does not compress: the disk is full within a few frames
+        let source = try XCTUnwrap(directory.source(a))
+        let texture = makeTexture(1280, 720)
+        var noise = [UInt8](repeating: 0, count: 1280 * 720 * 4)
+        let deadline = Date().addingTimeInterval(20)
+        while controller.state == "recording" && Date() < deadline {
+            arc4random_buf(&noise, noise.count)
+            for alpha in stride(from: 3, to: noise.count, by: 4) { noise[alpha] = 255 }
+            texture.replace(region: MTLRegionMake2D(0, 0, 1280, 720), mipmapLevel: 0, withBytes: noise, bytesPerRow: 1280 * 4)
+            source.deliver(texture)
+            RunLoop.main.run(until: Date().addingTimeInterval(0.03))
+        }
+        // The only movie of the take has failed: the take stops by itself
+        waitForState("idle")
+        XCTAssertFalse(controller.recordingError.isEmpty)
+        XCTAssertEqual(controller.error, controller.recordingError)
+    }
+
+    func testOSCQueryDescribesTheAssembledPicture() throws {
+        tick([a, b])
+        XCTAssertTrue(controller.startNetwork(withOSCPort: 19460, queryPort: 19461, name: "Recorder Test"))
+        deliverFrames(for: 0.1, from: [(a, makeTexture(640, 360)), (b, makeTexture(320, 360))])
+        send("/output", "both")
+        send("/layout", "column")
+        send("/gap", NSNumber(value: 4))
+
+        let root = contents(get("/"))
+        let output = try XCTUnwrap(root["output"] as? [String: Any])
+        XCTAssertEqual(output["VALUE"] as? [String], ["both"])
+        XCTAssertEqual((output["RANGE"] as? [[String: [String]]])?.first?["VALS"], ["separate", "assembled", "both"])
+        let layout = try XCTUnwrap(root["layout"] as? [String: Any])
+        XCTAssertEqual(layout["VALUE"] as? [String], ["column"])
+        XCTAssertEqual((layout["RANGE"] as? [[String: [String]]])?.first?["VALS"], ["row", "column", "grid", "focus"])
+        let gap = try XCTUnwrap(root["gap"] as? [String: Any])
+        XCTAssertEqual(gap["VALUE"] as? [Int], [4])
+        XCTAssertEqual(gap["TYPE"] as? String, "i")
+        for name in ["output", "layout", "gap"] {
+            XCTAssertFalse(((root[name] as? [String: Any])?["DESCRIPTION"] as? String ?? "").isEmpty, "\(name) has no description")
+        }
+
+        let assembled = contents(contents(root["status"])["assembled"])
+        XCTAssertEqual(Set(assembled.keys), ["width", "height", "file", "frames", "dropped"])
+        XCTAssertEqual((assembled["width"] as? [String: Any])?["VALUE"] as? [Int], [640])
+        XCTAssertEqual((assembled["height"] as? [String: Any])?["VALUE"] as? [Int], [360 + 4 + 720])
+        XCTAssertEqual((assembled["file"] as? [String: Any])?["VALUE"] as? [String], [""])
+        XCTAssertEqual((assembled["frames"] as? [String: Any])?["VALUE"] as? [Int], [0])
+    }
+
     // MARK: OSCQuery
 
     private func get(_ path: String) -> [String: Any] {
@@ -741,7 +1145,7 @@ final class RecorderControllerTests: XCTestCase {
         XCTAssertEqual(info["OSC_PORT"] as? Int, 19430)
 
         let root = contents(get("/"))
-        XCTAssertEqual(Set(root.keys), ["source", "record", "codec", "width", "height", "fps", "bitrate", "folder", "name", "status"])
+        XCTAssertEqual(Set(root.keys), ["source", "record", "codec", "width", "height", "fps", "bitrate", "folder", "name", "output", "layout", "gap", "status"])
 
         let codec = try XCTUnwrap(root["codec"] as? [String: Any])
         XCTAssertEqual(codec["VALUE"] as? [String], ["hevc"])
@@ -758,7 +1162,7 @@ final class RecorderControllerTests: XCTestCase {
         XCTAssertEqual(((places["2"] as? [String: Any])?["RANGE"] as? [[String: [String]]])?.first?["VALS"], all)
 
         let status = contents(root["status"])
-        XCTAssertEqual(Set(status.keys), ["state", "elapsed", "frames", "dropped", "file", "error", "failure", "source"])
+        XCTAssertEqual(Set(status.keys), ["state", "elapsed", "frames", "dropped", "file", "error", "failure", "source", "assembled"])
         XCTAssertEqual((status["state"] as? [String: Any])?["VALUE"] as? [String], ["idle"])
         let placeStatus = contents(contents(status["source"])["1"])
         XCTAssertEqual(Set(placeStatus.keys), ["online", "width", "height", "fps", "file", "frames", "dropped"])
