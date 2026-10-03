@@ -63,6 +63,7 @@ It builds on what exists: the recording core (`Recorder/`), its tests, the OSC a
   their place in the assembled picture. Each row: title, application or "NDI", size and rate, a note
   sign when it carries sound. A ticked source which has gone stays in the list, dimmed, and takes its
   place again when it comes back (the rule of D23, for every source). At most eight are ticked.
+  While a take is being recorded the ticked sources and their order cannot be changed.
   Only ticked sources are connected to: the app does not attach itself to every server it sees.
 - **Picture (middle).** The assembled picture, live, exactly as it is recorded, with each source's
   title over its part (the titles are not recorded). In "Separate" it is still shown, as a monitor.
@@ -101,7 +102,7 @@ first frame, so that separate movies line up when laid one above the other in an
 the codec, frame rate and bitrate settings; the size setting concerns the assembled movie only.
 
 Names, in the folder: `<name>.mov` for the assembled movie, `<name> — <source title>.mov` for each
-source. An empty name is `Simple Recorder yyyy-MM-dd HH.mm.ss`. Nothing is ever overwritten: if any of
+source. A take of one source, not assembled, is `<name>.mov` alone, as Simple Client's were. An empty name is `Simple Recorder yyyy-MM-dd HH.mm.ss`. Nothing is ever overwritten: if any of
 the take's names exists, the same number is added to all of them.
 
 The assembled movie's frames are produced when the first ticked source which is delivering frames
