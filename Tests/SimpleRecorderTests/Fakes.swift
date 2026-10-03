@@ -8,18 +8,24 @@ final class FakeSource: NSObject, FrameSource {
     var flipped = false
     var frameHandler: ((MTLTexture) -> Void)?
     private(set) var stopped = false
-    /// Which of the sources with its title it is
-    var choice = 0
+    /// Which of the directory's entries it is connected to
+    var entry = 0
+    weak var directory: FakeDirectory?
 
     init(title: String) { self.title = title }
+    var isAlive: Bool { !(directory?.dead.contains(entry) ?? false) }
     func stop() { stopped = true }
     func deliver(_ texture: MTLTexture) { frameHandler?(texture) }
 }
 
-/// The sources which exist, as the test says.
+/// The sources which exist, as the test says. As in Syphon's directory, a source whose application was killed
+/// stays listed: only connecting to it tells that it has gone.
 final class FakeDirectory: NSObject, SourceDirectory {
     var changeHandler: (() -> Void)?
     private(set) var titles: [String]
+    /// The entries (indexes into `titles`) which are listed but dead
+    private(set) var dead = Set<Int>()
+    /// Every source ever connected to, the latest last
     private(set) var connections: [FakeSource] = []
 
     init(_ titles: [String]) { self.titles = titles }
@@ -28,22 +34,33 @@ final class FakeDirectory: NSObject, SourceDirectory {
         titles.map { SourceDescription(title: $0, detail: $0.hasSuffix("eMotion") ? "eMotion" : "Simple Server", kind: .syphon) }
     }
 
-    func connectToSource(withTitle title: String, choice: UInt, device: MTLDevice) -> FrameSource? {
-        // Several sources can have the same title: choice says which, going round
-        let count = titles.filter { $0 == title }.count
-        guard count > 0 else { return nil }
+    func connectToSource(withTitle title: String, device: MTLDevice) -> FrameSource? {
+        // The first with the title which is alive
+        guard let entry = titles.indices.first(where: { titles[$0] == title && !dead.contains($0) }) else { return nil }
         let source = FakeSource(title: title)
-        source.choice = Int(choice) % count
+        source.entry = entry
+        source.directory = self
         connections.append(source)
         return source
     }
 
+    /// The live connection to a source, if there is one.
     func source(_ title: String) -> FakeSource? {
         connections.last { $0.title == title && !$0.stopped }
     }
 
     func setTitles(_ titles: [String]) {
         self.titles = titles
+        dead = []
+        changeHandler?()
+    }
+
+    /// The application of an entry is killed: nothing is announced, and the entry stays.
+    func kill(entry: Int) { dead.insert(entry) }
+
+    /// An application is launched: its source is announced.
+    func launch(_ title: String) {
+        titles.append(title)
         changeHandler?()
     }
 }

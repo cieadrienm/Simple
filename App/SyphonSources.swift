@@ -39,6 +39,8 @@ final class SyphonSource: NSObject, FrameSource {
     let flipped = true
 
     private var client: SyphonMetalClient?
+    private let serverDescription: [String: Any]
+    private let device: MTLDevice
     private let lock = NSLock()
     private var handler: ((MTLTexture) -> Void)?
 
@@ -50,11 +52,27 @@ final class SyphonSource: NSObject, FrameSource {
 
     init(title: String, serverDescription: [String: Any], device: MTLDevice) {
         self.title = title
+        self.serverDescription = serverDescription
+        self.device = device
         super.init()
         client = SyphonMetalClient(serverDescription: serverDescription, device: device, options: nil) { [weak self] client in
             guard let self, let handler = self.frameHandler, let frame = client.newFrameImage() else { return }
             handler(frame)
         }
+    }
+
+    /// Whether a client for a server's entry in the directory finds the server there.
+    ///
+    /// A client which was connected before its server's application was killed stays "valid" and silent for
+    /// ever; a client made afterwards is invalid at once. So the way to know is to make one.
+    static func serverIsAlive(_ description: [String: Any], device: MTLDevice) -> Bool {
+        let probe = SyphonMetalClient(serverDescription: description, device: device, options: nil, newFrameHandler: nil)
+        defer { probe.stop() }
+        return probe.isValid
+    }
+
+    var isAlive: Bool {
+        client != nil && Self.serverIsAlive(serverDescription, device: device)
     }
 
     func stop() {
@@ -111,11 +129,14 @@ final class SyphonDirectory: NSObject, SourceDirectory {
         }
     }
 
-    func connectToSource(withTitle title: String, choice: UInt, device: MTLDevice) -> FrameSource? {
-        // A server whose application was killed stays in Syphon's directory, and is there again when it is
-        // relaunched: nothing says which is alive but the frames, so the caller goes round them
-        let candidates = servers.filter { Self.title(for: $0) == title }
-        guard !candidates.isEmpty else { return nil }
-        return SyphonSource(title: title, serverDescription: candidates[Int(choice) % candidates.count], device: device)
+    func connectToSource(withTitle title: String, device: MTLDevice) -> FrameSource? {
+        // A server whose application was killed stays in Syphon's directory, and is there a second time once it
+        // is relaunched: the first with the title which is alive
+        for description in servers where Self.title(for: description) == title {
+            if SyphonSource.serverIsAlive(description, device: device) {
+                return SyphonSource(title: title, serverDescription: description, device: device)
+            }
+        }
+        return nil
     }
 }

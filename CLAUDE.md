@@ -33,7 +33,8 @@ Simple Server se construit depuis `Simple.xcworkspace`.
   les remettre à la fin (vider les places : huit fois `/source/1 ""`), ou passer par des arguments (`-RecorderName x`), qui ne sont pas enregistrés.
 - **Pas d'accès à l'écran** : la fenêtre se vérifie par `build/views/*.png`, les films par `build/tools/movie-info`.
 - **Une image Syphon a sa première ligne en bas** (D7). Tout ce qui l'affiche ou l'enregistre la retourne.
-- **Syphon garde pour toujours l'entrée d'un serveur dont l'application a été tuée** (D42). Ne jamais supposer qu'un serveur listé vit.
+- **Syphon garde pour toujours l'entrée d'un serveur dont l'application a été tuée** (D42). Ne jamais supposer qu'un serveur listé vit ;
+  un client déjà connecté reste « valide », seul un client neuf dit la vérité (`SyphonSource.serverIsAlive`). Le silence n'est pas la mort.
 - **`[NSApp terminate:]` depuis un bloc de la file principale se bloque** s'il attend une fin qui arrive sur cette même file (D26).
 - **`-[AVAssetWriter cancelWriting]` supprime le fichier.** Ne jamais l'appeler sur un film qui a des images (D21).
 - **`registerDefaults` est global au processus** : `object(forKey:)` répond les valeurs enregistrées par n'importe quel contrôleur. Pour

@@ -49,8 +49,8 @@ static const double kMaximumMegabitsPerSecond = 1000.0;
 static const NSTimeInterval kRefreshInterval = 0.25;
 // A source which has delivered no frame for this long is not online
 static const NSTimeInterval kOnlineTimeout = 1.0;
-// A source connected to which has delivered no frame for this long may be one which has gone without saying so:
-// another with its title is tried
+// A source which has delivered no frame for this long is asked whether it is alive, and a place without its
+// source tries for it again this often
 static const NSTimeInterval kSilenceTimeout = 2.0;
 
 #pragma mark - SourceDescription
@@ -80,9 +80,8 @@ static const NSTimeInterval kSilenceTimeout = 2.0;
 // Main thread: the place's movie in the current or last take
 @property (strong, nullable) TakeMovie *movie;
 @property (assign) BOOL inTake;
-// Main thread: which of the sources with its title it is connected to, and since when
-@property (assign) NSUInteger choice;
-@property (assign) NSTimeInterval connectionTime;
+// Main thread: when the place last connected, tried to, or asked its source whether it is alive
+@property (assign) NSTimeInterval checkTime;
 @end
 
 @implementation RecorderPlace {
@@ -502,14 +501,27 @@ static NSString *StringFrom(NSArray *arguments)
     for (RecorderPlace *place in self.places)
     {
         [place measureAtTime:now];
-        // A source which says nothing may have gone without the directory knowing (its application was killed):
-        // the directory still lists it, beside the one which replaced it. Try the next with its title.
-        if (place.source && now - MAX(place.connectionTime, [place lastFrameTime]) > kSilenceTimeout)
+        if (now - MAX(place.checkTime, [place lastFrameTime]) <= kSilenceTimeout)
         {
+            continue;
+        }
+        if (place.source == nil)
+        {
+            // Its source may be back without the directory having said so
+            [self connectPlace:place];
+        }
+        else if (!place.source.alive)
+        {
+            // A source which says nothing may have gone without the directory knowing: when an application is
+            // killed, Syphon goes on listing its server, beside the one which replaces it when it is relaunched.
+            // A source which is alive and silent is left alone: another with its title would be another picture.
             [place.source stop];
             place.source = nil;
-            place.choice++;
             [self connectPlace:place];
+        }
+        else
+        {
+            place.checkTime = now;
         }
     }
     for (NSString *key in keys.reverseObjectEnumerator)
@@ -562,12 +574,12 @@ static NSString *StringFrom(NSArray *arguments)
 
 - (void)connectPlace:(RecorderPlace *)place
 {
-    id<FrameSource> source = [_directory connectToSourceWithTitle:place.title choice:place.choice device:_device];
+    place.checkTime = CACurrentMediaTime();
+    id<FrameSource> source = [_directory connectToSourceWithTitle:place.title device:_device];
     if (source == nil)
     {
         return;
     }
-    place.connectionTime = CACurrentMediaTime();
     BOOL flipped = source.flipped;
     Take *take = _take;
     __weak RecorderPlace *weakPlace = place;
@@ -623,7 +635,15 @@ static NSString *StringFrom(NSArray *arguments)
         [self failWithError:@"/source expects the title of a source"];
         return nil;
     }
-    NSArray<NSString *> *titles = [self.availableSources valueForKey:@"title"];
+    // The sources available and, as a source which is away keeps its place, those chosen
+    NSMutableArray<NSString *> *titles = [[self.availableSources valueForKey:@"title"] mutableCopy];
+    for (RecorderPlace *place in self.places)
+    {
+        if (![titles containsObject:place.title])
+        {
+            [titles addObject:place.title];
+        }
+    }
     NSUInteger index = [titles indexOfObject:title];
     if (index == NSNotFound)
     {
@@ -902,11 +922,23 @@ static NSString *StringFrom(NSArray *arguments)
     {
         place.inTake = NO;
     }
-    // A movie which failed has said why already
-    if (error && self.recordingError.length == 0)
+    // A movie which failed during the take has said why already. One may also have failed as it was finished.
+    if (self.recordingError.length == 0)
     {
-        self.error = error.localizedDescription;
-        self.recordingError = error.localizedDescription;
+        NSArray<TakeMovie *> *movies = _take.movies;
+        NSString *message = error.localizedDescription;
+        for (TakeMovie *movie in movies)
+        {
+            if (message == nil && movie.error)
+            {
+                message = movies.count > 1 ? [NSString stringWithFormat:@"%@: %@", movie.sourceTitle, movie.error.localizedDescription] : movie.error.localizedDescription;
+            }
+        }
+        if (message)
+        {
+            self.error = message;
+            self.recordingError = message;
+        }
     }
     if (_activity)
     {

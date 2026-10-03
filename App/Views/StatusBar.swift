@@ -42,7 +42,7 @@ struct StatusBar: View {
                 Text("OSC is not available")
             }
             Spacer()
-            if !model.failure.isEmpty && !model.isRecording {
+            if !model.failure.isEmpty {
                 Text(model.failure).foregroundStyle(Theme.record).lineLimit(1)
             }
             Text(summary)

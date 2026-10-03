@@ -24,7 +24,7 @@ Each ticked source is written to its own `.mov`, at its own size. The movies of 
 - **Bitrate**: megabits per second for H.264 and HEVC, or automatic. ProRes has none to choose.
 - **Names**: `<name>.mov` for one source, `<name> — <source>.mov` for several; an empty name is `Simple Recorder` and the date. An existing movie is never overwritten: a number is added, the same for every movie of the recording.
 
-Frames are encoded on the GPU, away from the main thread. If an encoder cannot keep up frames are dropped, and counted, rather than delaying anything. Quitting, closing the window or `kill` while recording finishes the movies first. If writing fails (a full disk, for instance) the reason stays in the window until the next recording, and what was written is kept. The sources cannot be changed while recording.
+Frames are encoded on the GPU, away from the main thread. If an encoder cannot keep up frames are dropped, and counted, rather than delaying anything. Quitting, closing the window or `kill` while recording finishes the movies first. If writing one movie fails (a full disk, for instance) the others go on, the reason stays in the window for as long as the recording does and until the next one, and what was written is kept. The sources cannot be changed while recording.
 
 OSC and OSCQuery
 ----------------

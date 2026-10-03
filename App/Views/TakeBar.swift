@@ -48,24 +48,45 @@ struct TakeBar: View {
         .background(Theme.panel)
     }
 
-    /// Under way: what is written. Otherwise what went wrong, if anything did.
     @ViewBuilder private var caption: some View {
-        if !model.notice.isEmpty {
-            Label(model.notice, systemImage: "exclamationmark.triangle.fill")
-                .foregroundStyle(Theme.accent)
-                .font(.system(size: 12))
-                .lineLimit(2)
-        } else if model.state == "finishing" {
+        switch TakeCaption.of(state: model.state, notice: model.notice, failure: model.failure, frames: model.frames, dropped: model.dropped) {
+        case .none:
+            EmptyView()
+        case .notice(let notice):
+            Label(notice, systemImage: "exclamationmark.triangle.fill")
+                .foregroundStyle(Theme.accent).font(.system(size: 12)).lineLimit(2)
+        case .failure(let failure):
+            Label(failure, systemImage: "exclamationmark.triangle.fill")
+                .foregroundStyle(Theme.record).font(.system(size: 12)).lineLimit(2)
+        case .finishing:
             Text("Finishing the movies\u{2026}").font(.system(size: 12)).foregroundStyle(Theme.textDim)
-        } else if model.isRecording {
-            Text("\(model.frames) frames \u{00B7} \(model.dropped) dropped")
+        case .progress(let frames, let dropped):
+            Text("\(frames) frames \u{00B7} \(dropped) dropped")
                 .font(Theme.mono(12))
-                .foregroundStyle(model.dropped > 0 ? Theme.accent : Theme.textDim)
-        } else if !model.failure.isEmpty {
-            Label(model.failure, systemImage: "exclamationmark.triangle.fill")
-                .foregroundStyle(Theme.record)
-                .font(.system(size: 12))
-                .lineLimit(2)
+                .foregroundStyle(dropped > 0 ? Theme.accent : Theme.textDim)
+        }
+    }
+}
+
+/// What is said beside the time.
+enum TakeCaption: Equatable {
+    case none
+    /// An error which has just happened: a refused message, a recording which could not start
+    case notice(String)
+    /// Why a recording ended, or why one of its movies has stopped while the others go on
+    case failure(String)
+    case finishing
+    case progress(frames: Int, dropped: Int)
+
+    static func of(state: String, notice: String, failure: String, frames: Int, dropped: Int) -> TakeCaption {
+        if !notice.isEmpty { return .notice(notice) }
+        // A movie which has failed while the take goes on must stay in sight for as long as it does: nobody is
+        // watching at the moment it happens
+        if !failure.isEmpty { return .failure(failure) }
+        switch state {
+        case "recording": return .progress(frames: frames, dropped: dropped)
+        case "finishing": return .finishing
+        default: return .none
         }
     }
 }

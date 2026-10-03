@@ -9,18 +9,23 @@ final class FakeSource: NSObject, FrameSource {
     var flipped = false
     var frameHandler: ((MTLTexture) -> Void)?
     private(set) var stopped = false
-    /// Which of the sources with its title it is
-    var choice = 0
+    /// Which of the directory's entries it is connected to
+    var entry = 0
+    weak var directory: FakeDirectory?
 
     init(title: String) { self.title = title }
+    var isAlive: Bool { !(directory?.dead.contains(entry) ?? false) }
     func stop() { stopped = true }
     func deliver(_ texture: MTLTexture) { frameHandler?(texture) }
 }
 
-/// The sources which exist, as the test says.
+/// The sources which exist, as the test says. As in Syphon's directory, a source whose application was killed
+/// stays listed: only connecting to it tells that it has gone.
 final class FakeDirectory: NSObject, SourceDirectory {
     var changeHandler: (() -> Void)?
     private(set) var titles: [String]
+    /// The entries (indexes into `titles`) which are listed but dead
+    private(set) var dead = Set<Int>()
     /// Every source ever connected to, the latest last
     private(set) var connections: [FakeSource] = []
 
@@ -30,12 +35,12 @@ final class FakeDirectory: NSObject, SourceDirectory {
         titles.map { SourceDescription(title: $0, detail: "Test", kind: .syphon) }
     }
 
-    func connectToSource(withTitle title: String, choice: UInt, device: MTLDevice) -> FrameSource? {
-        // Several sources can have the same title: choice says which, going round
-        let count = titles.filter { $0 == title }.count
-        guard count > 0 else { return nil }
+    func connectToSource(withTitle title: String, device: MTLDevice) -> FrameSource? {
+        // The first with the title which is alive
+        guard let entry = titles.indices.first(where: { titles[$0] == title && !dead.contains($0) }) else { return nil }
         let source = FakeSource(title: title)
-        source.choice = Int(choice) % count
+        source.entry = entry
+        source.directory = self
         connections.append(source)
         return source
     }
@@ -47,6 +52,16 @@ final class FakeDirectory: NSObject, SourceDirectory {
 
     func setTitles(_ titles: [String]) {
         self.titles = titles
+        dead = []
+        changeHandler?()
+    }
+
+    /// The application of an entry is killed: nothing is announced, and the entry stays.
+    func kill(entry: Int) { dead.insert(entry) }
+
+    /// An application is launched: its source is announced.
+    func launch(_ title: String) {
+        titles.append(title)
         changeHandler?()
     }
 }
@@ -234,29 +249,56 @@ final class RecorderControllerTests: XCTestCase {
         XCTAssertEqual(controller.availableSources.map(\.title), ["main view - eMotion", "A - Simple Server"])
     }
 
-    func testASilentSourceGivesWayToTheNextOneWithItsTitle() throws {
-        // The first "C" is a server which was killed: Syphon still lists it, and it will never deliver a frame
-        directory.setTitles(["C - Simple Server", "C - Simple Server"])
+    func testASourceWhoseApplicationWasKilledIsFoundAgain() throws {
+        directory.setTitles(["C - Simple Server"])
         XCTAssertTrue(controller.addSource(matching: "C - Simple Server"))
-        let dead = try XCTUnwrap(directory.source("C - Simple Server"))
-        XCTAssertEqual(dead.choice, 0, "the first with the title is tried first")
-
-        RunLoop.main.run(until: Date().addingTimeInterval(2.8))
-        let live = try XCTUnwrap(directory.source("C - Simple Server"))
-        XCTAssertTrue(dead.stopped, "the silent source is let go of")
-        XCTAssertEqual(live.choice, 1)
-        XCTAssertNotNil(live.frameHandler)
-
-        // This one delivers: it is kept
+        let first = try XCTUnwrap(directory.source("C - Simple Server"))
         let texture = makeTexture()
-        let end = Date().addingTimeInterval(2.8)
+        first.deliver(texture)
+
+        // Killed: Syphon says nothing, and goes on listing it
+        directory.kill(entry: 0)
+        RunLoop.main.run(until: Date().addingTimeInterval(2.8))
+        XCTAssertTrue(first.stopped, "a source which has gone is let go of")
+        XCTAssertNil(directory.source("C - Simple Server"), "there is nothing alive to connect to")
+        XCTAssertEqual(titles, ["C - Simple Server"], "the place stays its own")
+        XCTAssertFalse(controller.places[0].isOnline)
+
+        // Relaunched: listed a second time, beside the dead entry
+        directory.launch("C - Simple Server")
+        let second = try XCTUnwrap(directory.source("C - Simple Server"))
+        XCTAssertEqual(second.entry, 1, "the live one, not the dead one which comes first")
+        let end = Date().addingTimeInterval(0.6)
         while Date() < end {
-            live.deliver(texture)
+            second.deliver(texture)
             RunLoop.main.run(until: Date().addingTimeInterval(0.05))
         }
-        XCTAssertFalse(live.stopped)
-        XCTAssertTrue(directory.source("C - Simple Server") === live)
         XCTAssertTrue(controller.places[0].isOnline)
+    }
+
+    func testASilentSourceWhichIsAliveIsKept() throws {
+        // Two live servers with the same title, as eMotion can have: the first is taken, and stays taken when it
+        // has nothing to say (a scene which does not move publishes no frame)
+        directory.setTitles(["main view - eMotion", "main view - eMotion"])
+        XCTAssertTrue(controller.addSource(matching: "main view - eMotion"))
+        let source = try XCTUnwrap(directory.source("main view - eMotion"))
+        XCTAssertEqual(source.entry, 0)
+
+        RunLoop.main.run(until: Date().addingTimeInterval(4.6))
+        XCTAssertFalse(source.stopped, "it is alive: silence is not a reason to leave it")
+        XCTAssertEqual(directory.connections.count, 1, "nor to connect to it again")
+    }
+
+    func testAPlaceWaitingForItsSourceCanBeGivenItAgain() {
+        // What a show's OSC preset does: it names the sources each time, whether they are there yet or not
+        XCTAssertTrue(controller.addSource(matching: "A - Simple Server"))
+        XCTAssertTrue(controller.addSource(matching: "B - Simple Server"))
+        directory.setTitles(["A - Simple Server"])
+        send("/source/2", "B - Simple Server")
+        XCTAssertEqual(controller.error, "", "B is away, but the second place is already its own")
+        XCTAssertEqual(titles, ["A - Simple Server", "B - Simple Server"])
+        XCTAssertTrue(controller.setSourceMatching("B - Simple Server", atPlace: 1), "and it can be moved")
+        XCTAssertEqual(titles, ["B - Simple Server", "A - Simple Server"])
     }
 
     func testTickingConnectsAndUntickingDisconnects() {
@@ -560,6 +602,38 @@ final class RecorderControllerTests: XCTestCase {
         XCTAssertEqual(controller.recordingError, "")
         XCTAssertTrue(FileManager.default.fileExists(atPath: controller.places[0].file))
         XCTAssertEqual(controller.places[1].file, "", "B has no movie")
+    }
+
+    func testAMovieWhichCannotBeFinishedIsReported() throws {
+        // A disk of its own, which goes away while the take is being recorded
+        let image = folder.appendingPathComponent("small.dmg")
+        let volume = folder.appendingPathComponent("volume")
+        try FileManager.default.createDirectory(at: volume, withIntermediateDirectories: true)
+        func hdiutil(_ arguments: [String]) throws {
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/hdiutil")
+            process.arguments = arguments
+            process.standardOutput = FileHandle.nullDevice
+            process.standardError = FileHandle.nullDevice
+            try process.run()
+            process.waitUntilExit()
+            try XCTSkipIf(process.terminationStatus != 0, "hdiutil \(arguments.first ?? "") failed")
+        }
+        try hdiutil(["create", "-size", "20m", "-fs", "HFS+", "-volname", "RecorderTest", image.path])
+        try hdiutil(["attach", "-nobrowse", "-mountpoint", volume.path, image.path])
+        var attached = true
+        defer { if attached { try? hdiutil(["detach", "-force", volume.path]) } }
+
+        controller.folder = volume.path
+        XCTAssertTrue(controller.addSource(matching: "A - Simple Server"))
+        XCTAssertTrue(controller.addSource(matching: "B - Simple Server"))
+        XCTAssertTrue(controller.start())
+        deliverFrames(for: 0.5)
+        try hdiutil(["detach", "-force", volume.path])
+        attached = false
+        stopAndWait()
+
+        XCTAssertFalse(controller.recordingError.isEmpty, "movies which could not be finished must be said to have failed")
     }
 
     func testStartingClearsThePreviousError() {

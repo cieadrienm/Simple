@@ -58,6 +58,9 @@ typedef NS_ENUM(NSInteger, FrameSourceKind) {
 @property (readonly) BOOL flipped;
 // Called for every frame, on any thread
 @property (copy, nullable) void (^frameHandler)(id<MTLTexture> frame);
+// NO once what it is connected to has gone: it will deliver nothing more. A source which is alive may be silent
+// (a picture which does not change need not be sent again). Asked on the main thread, of a source which is silent.
+@property (readonly, getter=isAlive) BOOL alive;
 - (void)stop;
 @end
 
@@ -66,11 +69,9 @@ typedef NS_ENUM(NSInteger, FrameSourceKind) {
  */
 @protocol SourceDirectory <NSObject>
 - (NSArray<SourceDescription *> *)availableSources;
-// Connects to a source with this title. nil if there is none.
-// Several can have the same title — Syphon lists a server which was killed for ever, and again once it is
-// relaunched: choice says which of them, counting from 0 and going round. A caller which gets no frame from one
-// tries the next.
-- (nullable id<FrameSource>)connectToSourceWithTitle:(NSString *)title choice:(NSUInteger)choice device:(id<MTLDevice>)device;
+// Connects to the source with this title. Several can have it — Syphon lists a server whose application was
+// killed for ever, and again once it is relaunched: the first which is alive. nil if none is.
+- (nullable id<FrameSource>)connectToSourceWithTitle:(NSString *)title device:(id<MTLDevice>)device;
 // Called on the main queue when availableSources has changed
 @property (copy, nullable) void (^changeHandler)(void);
 @end
