@@ -57,9 +57,15 @@
     id<MTLDevice> device = self.view.device;
 
 	// Create a server.
-    // - This is our only server so we don't give it a name.
+    // - This is our only server so we don't give it a name, unless we are given one (-ServerName A): several
+    //   Simple Servers can then be told apart, which is useful to test a client of several servers.
 
-    syServer = [[SyphonMetalServer alloc] initWithName:nil device:device options:nil];
+    NSString *name = [[NSUserDefaults standardUserDefaults] stringForKey:@"ServerName"];
+    syServer = [[SyphonMetalServer alloc] initWithName:name device:device options:nil];
+    if (name.length > 0)
+    {
+        self.window.title = [NSString stringWithFormat:@"Simple Server \u2014 %@", name];
+    }
 
     renderer = [[SimpleRenderer alloc] initWithDevice:device];
     commandQueue = [device newCommandQueue];

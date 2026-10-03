@@ -1,27 +1,36 @@
 #!/bin/sh
-# Builds Simple Client and Simple Server for release into build/, with simple-recorder-mcp inside Simple Client,
-# and signs them.
+# Builds Simple Recorder and Simple Server for release into build/, and signs them.
 #
-#   Scripts/bundle.sh             build/Simple Client.app and build/Simple Server.app
+#   Scripts/bundle.sh             build/Simple Recorder.app and build/Simple Server.app
 #   INSTALL=1 Scripts/bundle.sh   also copies them to /Applications
 #   SIGN_IDENTITY="Developer ID Application: …" Scripts/bundle.sh   signs with that identity ("-" for ad hoc)
+#
+# Simple Recorder is a SwiftPM executable (the SwiftUI app in App/, the core in Recorder/), put in a bundle here
+# with Syphon's framework and the MCP tool. Simple Server is built from its Xcode project.
 set -e
 cd "$(dirname "$0")/.."
 
-DERIVED="build/DerivedData"
-PRODUCTS="$DERIVED/Build/Products/Release"
-
-for SCHEME in "Simple Client" "Simple Server"; do
-    xcodebuild -workspace Simple.xcworkspace -scheme "$SCHEME" -configuration Release \
-        -destination 'generic/platform=macOS' -derivedDataPath "$DERIVED" build -quiet
-done
+Scripts/syphon.sh
+swift build -c release --arch arm64 --arch x86_64 --product SimpleRecorder
 swift build -c release --arch arm64 --arch x86_64 --product simple-recorder-mcp
+PRODUCTS=".build/apple/Products/Release"
 
-for APP in "Simple Client" "Simple Server"; do
-    rm -rf "build/$APP.app"
-    ditto "$PRODUCTS/$APP.app" "build/$APP.app"
-done
-cp .build/apple/Products/Release/simple-recorder-mcp "build/Simple Client.app/Contents/MacOS/"
+APP="build/Simple Recorder.app"
+rm -rf "$APP"
+mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Frameworks" "$APP/Contents/Resources"
+cp Resources/Info.plist "$APP/Contents/Info.plist"
+cp Resources/icon.icns "$APP/Contents/Resources/"
+cp "$PRODUCTS/SimpleRecorder" "$APP/Contents/MacOS/Simple Recorder"
+cp "$PRODUCTS/simple-recorder-mcp" "$APP/Contents/MacOS/"
+ditto build/Syphon.xcframework/macos-arm64_x86_64/Syphon.framework "$APP/Contents/Frameworks/Syphon.framework"
+# SwiftPM looks for Syphon beside the executable: in a bundle it is in Frameworks
+install_name_tool -add_rpath "@executable_path/../Frameworks" "$APP/Contents/MacOS/Simple Recorder"
+
+DERIVED="build/DerivedData"
+xcodebuild -workspace Simple.xcworkspace -scheme "Simple Server" -configuration Release \
+    -destination 'generic/platform=macOS' -derivedDataPath "$DERIVED" build -quiet
+rm -rf "build/Simple Server.app"
+ditto "$DERIVED/Build/Products/Release/Simple Server.app" "build/Simple Server.app"
 
 # Signing. A real identity keeps the apps' identity stable across rebuilds, so macOS remembers their permissions
 # (Local Network, for OSC and OSCQuery). Without one they are signed ad hoc, and macOS asks again after each build.
@@ -32,8 +41,8 @@ if [ -z "${SIGN_IDENTITY:-}" ]; then
     [ -n "$SIGN_IDENTITY" ] || SIGN_IDENTITY="-"
 fi
 sign() {
-    codesign --force --timestamp=none --sign "$1" "build/Simple Client.app/Contents/Frameworks/Syphon.framework/Versions/A" \
-        "build/Simple Client.app/Contents/MacOS/simple-recorder-mcp" "build/Simple Client.app" \
+    codesign --force --timestamp=none --sign "$1" "$APP/Contents/Frameworks/Syphon.framework/Versions/A" \
+        "$APP/Contents/MacOS/simple-recorder-mcp" "$APP" \
         "build/Simple Server.app/Contents/Frameworks/Syphon.framework/Versions/A" "build/Simple Server.app"
 }
 if ! sign "$SIGN_IDENTITY" 2>build/codesign.log; then
@@ -41,13 +50,14 @@ if ! sign "$SIGN_IDENTITY" 2>build/codesign.log; then
     SIGN_IDENTITY="-"
     sign "-"
 fi
+codesign --verify --deep --strict "$APP"
 echo "signed: $SIGN_IDENTITY" >&2
 
 if [ "${INSTALL:-0}" = "1" ]; then
-    for APP in "Simple Client" "Simple Server"; do
-        rm -rf "/Applications/$APP.app"
-        ditto "build/$APP.app" "/Applications/$APP.app"
+    for NAME in "Simple Recorder" "Simple Server"; do
+        rm -rf "/Applications/$NAME.app"
+        ditto "build/$NAME.app" "/Applications/$NAME.app"
     done
     echo "installed in /Applications" >&2
 fi
-echo "built: build/Simple Client.app, build/Simple Server.app"
+echo "built: $APP, build/Simple Server.app"
