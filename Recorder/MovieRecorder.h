@@ -79,6 +79,8 @@ extern NSString * const MovieRecorderErrorDomain;
 - (void)appendTexture:(id<MTLTexture>)texture flipped:(BOOL)flipped atTime:(NSTimeInterval)time;
 // NO if a frame arriving now would not be written: the movie's frame rate would discard it, or nothing is being
 // recorded. For a caller which has work to do to make the frame. Can be called from any thread.
+// While the encoder is behind, the frame is not wanted either, and is counted as dropped: a picture made for the
+// recorder (a composite) must not be made, as making it may draw over one which is still waiting to be read.
 - (BOOL)wantsFrameAtTime:(NSTimeInterval)time;
 // Stops accepting frames, waits for those being encoded, and finishes the file so that the movie lasts until time.
 // handler is called on the main queue, with an error if the movie could not be written. If no frame was received

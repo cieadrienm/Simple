@@ -51,6 +51,8 @@ static const double kMaximumMegabitsPerSecond = 1000.0;
 static const NSInteger kMaximumGap = 1000;
 // When no take needs it, the assembled picture is composed this often at most, to be shown
 static const NSTimeInterval kMonitorInterval = 1.0 / 30.0;
+// and no larger than this on a side: it is to be looked at in a window, whatever the size it is recorded at
+static const CGFloat kMonitorLargestSide = 4096.0;
 // How often what changes by itself is refreshed
 static const NSTimeInterval kRefreshInterval = 0.25;
 // A source which has delivered no frame for this long is not online
@@ -324,6 +326,8 @@ static NSString *StringFrom(NSArray *arguments)
     BOOL _composeTransparent;
     // The picture of the take being recorded, if it has an assembled movie
     Layout *_takeLayout;
+    // The same, as it is shown
+    Layout *_takeMonitorLayout;
     BOOL _takeTransparent;
     // The place whose frames set the pace of the assembled picture
     RecorderPlace *_clockPlace;
@@ -674,6 +678,21 @@ static NSArray *SizesOfPlaces(NSArray<RecorderPlace *> *places)
     return sizes;
 }
 
+// A layout as it is shown: the same picture, no larger than kMonitorLargestSide on a side. A picture too large to be
+// recorded can still be seen, and a large one does not cost its size in memory twice.
+static Layout *MonitorLayout(Layout *layout, LayoutKind kind, NSArray *sizes, NSInteger gap)
+{
+    NSSize size = layout.size;
+    CGFloat largest = MAX(size.width, size.height);
+    if (largest <= kMonitorLargestSide)
+    {
+        return layout;
+    }
+    CGFloat scale = kMonitorLargestSide / largest;
+    NSSize shown = NSMakeSize(MAX(round(size.width * scale / 2.0) * 2.0, 2.0), MAX(round(size.height * scale / 2.0) * 2.0, 2.0));
+    return [[Layout alloc] initWithKind:kind sourceSizes:sizes gap:gap fittingSize:shown];
+}
+
 - (LayoutKind)layoutKind
 {
     LayoutKind kind = LayoutKindRow;
@@ -776,7 +795,7 @@ static NSArray *SizesOfPlaces(NSArray<RecorderPlace *> *places)
 {
     os_unfair_lock_lock(&_composeLock);
     NSArray<RecorderPlace *> *places = _composePlaces;
-    Layout *layout = _takeLayout;
+    Layout *layout = _takeMonitorLayout;
     BOOL transparent = layout ? _takeTransparent : _composeTransparent;
     LayoutKind kind = _composeKind;
     NSInteger gap = _composeGap;
@@ -784,7 +803,8 @@ static NSArray *SizesOfPlaces(NSArray<RecorderPlace *> *places)
     os_unfair_lock_unlock(&_composeLock);
     if (layout == nil)
     {
-        layout = [[Layout alloc] initWithKind:kind sourceSizes:SizesOfPlaces(places) gap:gap fittingSize:fittingSize];
+        NSArray *sizes = SizesOfPlaces(places);
+        layout = MonitorLayout([[Layout alloc] initWithKind:kind sourceSizes:sizes gap:gap fittingSize:fittingSize], kind, sizes, gap);
     }
     dispatch_semaphore_t drawn = wait ? dispatch_semaphore_create(0) : nil;
     BOOL composed = [self composePlaces:places layout:layout transparent:transparent with:_monitorCompositor atTime:time then:^(id<MTLTexture> picture) {
@@ -1168,6 +1188,7 @@ static NSArray *SizesOfPlaces(NSArray<RecorderPlace *> *places)
     }];
     os_unfair_lock_lock(&_composeLock);
     _takeLayout = layout;
+    _takeMonitorLayout = layout ? MonitorLayout(layout, [self layoutKind], sizes, self.gap) : nil;
     _takeTransparent = codec == MovieCodecProRes4444;
     os_unfair_lock_unlock(&_composeLock);
 
@@ -1207,6 +1228,7 @@ static NSArray *SizesOfPlaces(NSArray<RecorderPlace *> *places)
     }
     os_unfair_lock_lock(&_composeLock);
     _takeLayout = nil;
+    _takeMonitorLayout = nil;
     os_unfair_lock_unlock(&_composeLock);
     self.state = kStateFinishing;
     [self changed];

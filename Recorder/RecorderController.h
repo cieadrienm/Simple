@@ -120,8 +120,8 @@ extern const NSUInteger RecorderMaximumPlaces;
 // The assembled picture: that of the take while one is recorded to an assembled movie (it does not change during
 // the take), otherwise that of the settings and of the sources as they are.
 @property (readonly) Layout *assembledLayout;                   // /status/assembled/width, /height: its size
-// The last picture composed, to show it: its first row is the top. nil if there is no source, or if the picture is
-// too large to be composed.
+// The last picture composed, to show it: its first row is the top. It may be smaller than the picture recorded (no
+// more than 4096 on a side when it is composed only to be shown). nil if there is no source.
 @property (readonly, nullable) id<MTLTexture> assembledFrame;
 // The assembled movie of the take being recorded, or of the last one
 @property (readonly, copy) NSString *assembledFile;             // /status/assembled/file: empty if there is none

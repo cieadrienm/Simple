@@ -229,6 +229,19 @@ final class RecorderModelTests: XCTestCase {
         XCTAssertEqual(model.pictureSize, CGSize(width: 2880, height: 1080))
     }
 
+    func testAPictureTooLargeIsOnlyAProblemWhenItIsRecorded() {
+        model.tick("A - Simple Server")
+        model.tick("B - Simple Server")
+        for title in ["A - Simple Server", "B - Simple Server"] { recorder.directory.source(title)?.deliver(recorder.texture(16384, 16)) }
+        spin(0.4)
+        XCTAssertEqual(model.pictureSize.width, 32768)
+        XCTAssertFalse(model.pictureIsTooLarge, "separate movies do not care")
+        model.setOutput("both")
+        XCTAssertTrue(model.pictureIsTooLarge)
+        model.setSize(width: 3840, height: 2160)
+        XCTAssertFalse(model.pictureIsTooLarge)
+    }
+
     func testTheAssembledMoviesFramesAreTheTakes() {
         model.tick("A - Simple Server")
         model.tick("B - Simple Server")

@@ -315,6 +315,24 @@ final class MovieRecorderTests: XCTestCase {
         XCTAssertFalse(recorder.wantsFrame(atTime: 101))
     }
 
+    func testAFrameIsNotWantedWhileTheEncoderIsBehind() throws {
+        // Whoever composes a picture for the recorder asks first: a picture which would be dropped on arrival
+        // must not be composed, as it would take the place of one which is still waiting to be read
+        let recorder = MovieRecorder(device: device)
+        try recorder.startWriting(to: folder.appendingPathComponent("behind.mov"), settings: settings(), startTime: 100)
+        let texture = makeTexture(width: 3840, height: 2160)
+        // The first frame makes the writer, which takes a moment: these three wait behind it
+        for index in 0..<3 { recorder.append(texture, flipped: false, atTime: 100 + Double(index) / 60) }
+        XCTAssertEqual(recorder.framesPending, 3)
+        XCTAssertFalse(recorder.wantsFrame(atTime: 100.05))
+        XCTAssertEqual(recorder.framesDropped, 1, "the frame it had no room for is counted")
+        let deadline = Date().addingTimeInterval(10)
+        while recorder.framesPending > 0 && Date() < deadline { usleep(1000) }
+        XCTAssertTrue(recorder.wantsFrame(atTime: 100.1))
+        XCTAssertEqual(recorder.framesDropped, 1, "asking when there is room counts nothing")
+        finish(recorder, at: 100.2)
+    }
+
     func testWriterIsReadyBeforeTheFirstFrameWhenTheSizeIsGiven() throws {
         // Creating the writer takes a moment: when it waits for the first frame, the frames which follow are lost
         let recorder = MovieRecorder(device: device)

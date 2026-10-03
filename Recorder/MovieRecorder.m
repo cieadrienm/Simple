@@ -465,6 +465,12 @@ static NSError *RecorderError(NSString *description)
 {
     os_unfair_lock_lock(&_lock);
     BOOL wants = _recording && [_pacer wouldKeepFrameAtTime:time];
+    if (wants && _framesPending >= kMaximumFramesPending)
+    {
+        // It would be dropped on arrival: it is dropped here, before it is made
+        _framesDropped++;
+        wants = NO;
+    }
     os_unfair_lock_unlock(&_lock);
     return wants;
 }

@@ -855,6 +855,20 @@ final class RecorderControllerTests: XCTestCase {
         XCTAssertNil(controller.assembledFrame)
     }
 
+    func testALargePictureIsShownSmallerThanItIsRecorded() throws {
+        tick([a, b])
+        send("/output", "assembled")
+        send("/name", "show")
+        deliverFrames(for: 0.2, from: [(a, makeTexture(4000, 500)), (b, makeTexture(4000, 500))])
+        XCTAssertEqual(controller.assembledLayout.size, size(8000, 500), "the picture's size is the one recorded")
+        XCTAssertEqual(controller.assembledFrame?.width, 4096)
+        XCTAssertEqual(controller.assembledFrame?.height, 256)
+        XCTAssertTrue(controller.start())
+        deliverFrames(for: 0.3, from: [(a, makeTexture(4000, 500)), (b, makeTexture(4000, 500))])
+        stopAndWait()
+        XCTAssertEqual(try MovieInfo(folder.appendingPathComponent("show.mov")).size, size(8000, 500))
+    }
+
     func testAssembledWritesOneMovie() throws {
         tick([a, b, depth])
         send("/name", "show")
@@ -1026,7 +1040,10 @@ final class RecorderControllerTests: XCTestCase {
         // Two sources as wide as a texture can be: side by side they are more than any can hold
         deliverFrames(for: 0.1, from: [(a, makeTexture(16384, 16)), (b, makeTexture(16384, 16))])
         XCTAssertEqual(controller.assembledLayout.size, size(32768, 16))
-        XCTAssertNil(controller.assembledFrame, "it cannot be shown either")
+        // It is still shown, smaller: the sources must be seen, and separate movies can be recorded
+        let shown = try XCTUnwrap(controller.assembledFrame)
+        XCTAssertEqual(shown.width, 4096)
+        XCTAssertEqual(shown.height, 2)
         send("/output", "both")
         XCTAssertFalse(controller.start())
         XCTAssertTrue(controller.error.contains("32768") && controller.error.contains("smaller size"), controller.error)

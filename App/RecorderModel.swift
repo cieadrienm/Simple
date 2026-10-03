@@ -110,7 +110,10 @@ final class RecorderModel: ObservableObject {
         ("grid", "Mosaic", "rectangle.split.2x2"), ("focus", "One large", "rectangle.trailingthird.inset.filled")]
     /// The largest picture which can be composed and written, on a side
     static let largestSide: CGFloat = 16384
-    var pictureIsTooLarge: Bool { pictureSize.width > Self.largestSide || pictureSize.height > Self.largestSide }
+    /// Whether a recording would be refused for the size of its assembled picture. Separate movies do not care.
+    var pictureIsTooLarge: Bool {
+        output != "separate" && (pictureSize.width > Self.largestSide || pictureSize.height > Self.largestSide)
+    }
     static let codecs: [(name: String, title: String)] = [("h264", "H.264"), ("hevc", "HEVC"), ("prores422", "ProRes 422"), ("prores4444", "ProRes 4444")]
     /// Whether the codec has a bitrate to choose
     var codecHasBitrate: Bool { codec == "h264" || codec == "hevc" }
