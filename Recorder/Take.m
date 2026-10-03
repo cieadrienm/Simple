@@ -61,12 +61,17 @@ static NSString *FileName(NSString *name)
     return safe;
 }
 
+// The largest picture Metal can hold, on a side
+static const CGFloat kLargestSide = 16384;
+
 @implementation Take {
     id<MTLDevice> _device;
     // Recorders are kept from one take to the next: making one compiles its shaders
     NSMutableArray<MovieRecorder *> *_recorders;
     // Main thread, like movies, except in appendTexture: which reads the array it was given at the start
     NSArray<TakeMovie *> *_movies;
+    MovieRecorder *_assembledRecorder;
+    TakeMovie *_assembledMovie;
     BOOL _recording;
     BOOL _finishing;
 }
@@ -83,24 +88,68 @@ static NSString *FileName(NSString *name)
     return self;
 }
 
++ (NSArray<NSString *> *)outputNames
+{
+    return @[@"separate", @"assembled", @"both"];
+}
+
++ (NSString *)nameForOutput:(TakeOutput)output
+{
+    NSArray<NSString *> *names = [self outputNames];
+    return output >= 0 && (NSUInteger)output < names.count ? names[output] : names[0];
+}
+
++ (BOOL)getOutput:(TakeOutput *)output forName:(NSString *)name
+{
+    NSUInteger index = [[self outputNames] indexOfObject:name.lowercaseString];
+    if (index == NSNotFound)
+    {
+        return NO;
+    }
+    *output = (TakeOutput)index;
+    return YES;
+}
+
 + (NSArray<NSURL *> *)urlsForName:(NSString *)name sourceTitles:(NSArray<NSString *> *)titles inFolder:(NSURL *)folder
+{
+    return [self urlsForName:name sourceTitles:titles output:TakeOutputSeparate inFolder:folder assembledURL:NULL];
+}
+
++ (NSArray<NSURL *> *)urlsForName:(NSString *)name
+                     sourceTitles:(NSArray<NSString *> *)titles
+                           output:(TakeOutput)output
+                         inFolder:(NSURL *)folder
+                     assembledURL:(NSURL **)assembledURL
 {
     NSFileManager *fileManager = [NSFileManager defaultManager];
     NSString *base = FileName(name);
+    BOOL assembled = output != TakeOutputSeparate;
+    // The name alone is the assembled movie's when there is one
+    BOOL alone = !assembled && titles.count == 1;
     for (NSInteger number = 1; ; number++)
     {
         NSString *numbered = number == 1 ? base : [NSString stringWithFormat:@"%@ %ld", base, (long)number];
         NSMutableArray<NSURL *> *urls = [NSMutableArray array];
         BOOL taken = NO;
-        for (NSString *title in titles)
+        for (NSString *title in output == TakeOutputAssembled ? @[] : titles)
         {
-            NSString *file = titles.count == 1 ? numbered : [NSString stringWithFormat:@"%@ \u2014 %@", numbered, FileName(title)];
+            NSString *file = alone ? numbered : [NSString stringWithFormat:@"%@ \u2014 %@", numbered, FileName(title)];
             NSURL *url = [folder URLByAppendingPathComponent:[file stringByAppendingPathExtension:@"mov"]];
             taken = taken || [fileManager fileExistsAtPath:url.path];
             [urls addObject:url];
         }
+        NSURL *assembledMovie = nil;
+        if (assembled)
+        {
+            assembledMovie = [folder URLByAppendingPathComponent:[numbered stringByAppendingPathExtension:@"mov"]];
+            taken = taken || [fileManager fileExistsAtPath:assembledMovie.path];
+        }
         if (!taken)
         {
+            if (assembledURL)
+            {
+                *assembledURL = assembledMovie;
+            }
             return urls;
         }
     }
@@ -122,9 +171,17 @@ static NSString *FileName(NSString *name)
     }
 }
 
+- (TakeMovie *)assembledMovie
+{
+    @synchronized (self)
+    {
+        return _assembledMovie;
+    }
+}
+
 - (NSUInteger)framesPending
 {
-    NSUInteger pending = 0;
+    NSUInteger pending = self.assembledMovie.recorder.framesPending;
     for (TakeMovie *movie in self.movies)
     {
         pending += movie.recorder.framesPending;
@@ -139,6 +196,20 @@ static NSError *TakeError(NSString *description)
 
 - (BOOL)startWithSourceTitles:(NSArray<NSString *> *)titles
                         sizes:(NSArray *)sizes
+                         name:(NSString *)name
+                       folder:(NSURL *)folder
+                     settings:(MovieRecorderSettings *)settings
+                       atTime:(NSTimeInterval)time
+                        error:(NSError **)error
+{
+    return [self startWithSourceTitles:titles sizes:sizes output:TakeOutputSeparate assembledSize:NSZeroSize
+                                  name:name folder:folder settings:settings atTime:time error:error];
+}
+
+- (BOOL)startWithSourceTitles:(NSArray<NSString *> *)titles
+                        sizes:(NSArray *)sizes
+                       output:(TakeOutput)output
+                assembledSize:(NSSize)assembledSize
                          name:(NSString *)name
                        folder:(NSURL *)folder
                      settings:(MovieRecorderSettings *)settings
@@ -175,7 +246,27 @@ static NSError *TakeError(NSString *description)
         return NO;
     }
 
-    while (_recorders.count < titles.count)
+    BOOL assembled = output != TakeOutputSeparate;
+    if (assembled && (assembledSize.width < 2 || assembledSize.height < 2))
+    {
+        problem = @"The assembled picture has no size";
+    }
+    else if (assembled && (assembledSize.width > kLargestSide || assembledSize.height > kLargestSide))
+    {
+        // The writer would accept it, and every frame would be dropped
+        problem = [NSString stringWithFormat:@"An assembled picture of %ld \u00D7 %ld is too large to be written. Choose a smaller size for the assembled movie",
+                   (long)assembledSize.width, (long)assembledSize.height];
+    }
+    if (problem)
+    {
+        if (error)
+        {
+            *error = TakeError(problem);
+        }
+        return NO;
+    }
+    NSUInteger sourceMovies = output == TakeOutputAssembled ? 0 : titles.count;
+    while (_recorders.count < sourceMovies || (assembled && _assembledRecorder == nil))
     {
         MovieRecorder *recorder = [[MovieRecorder alloc] initWithDevice:_device];
         if (recorder == nil)
@@ -186,13 +277,56 @@ static NSError *TakeError(NSString *description)
             }
             return NO;
         }
-        [_recorders addObject:recorder];
+        if (_recorders.count < sourceMovies)
+        {
+            [_recorders addObject:recorder];
+        }
+        else
+        {
+            _assembledRecorder = recorder;
+        }
     }
 
-    NSArray<NSURL *> *urls = [Take urlsForName:name sourceTitles:titles inFolder:folder];
+    NSURL *assembledURL = nil;
+    NSArray<NSURL *> *urls = [Take urlsForName:name sourceTitles:titles output:output inFolder:folder assembledURL:&assembledURL];
     NSMutableArray<TakeMovie *> *movies = [NSMutableArray array];
     __weak Take *weakSelf = self;
-    for (NSUInteger index = 0; index < titles.count; index++)
+
+    // The assembled movie first: its size is known, and if the codec cannot write it nothing has been started
+    TakeMovie *assembledMovie = nil;
+    if (assembled)
+    {
+        assembledMovie = [[TakeMovie alloc] init];
+        assembledMovie.sourceTitle = @"";
+        assembledMovie.url = assembledURL;
+        assembledMovie.recorder = _assembledRecorder;
+        MovieRecorderSettings *own = [settings copy];
+        own.width = (NSInteger)assembledSize.width;
+        own.height = (NSInteger)assembledSize.height;
+        __weak TakeMovie *weakMovie = assembledMovie;
+        assembledMovie.recorder.failureHandler = ^(NSError *failure) {
+            weakMovie.error = failure;
+            Take *take = weakSelf;
+            if (take.movieFailureHandler)
+            {
+                take.movieFailureHandler(NSNotFound, failure);
+            }
+        };
+        NSError *startError = nil;
+        if (![assembledMovie.recorder startWritingToURL:assembledURL settings:own startTime:time error:&startError])
+        {
+            if (error)
+            {
+                // What can be done about it, when it is the size
+                BOOL folderProblem = ![[NSFileManager defaultManager] isWritableFileAtPath:folder.path];
+                *error = folderProblem ? startError : TakeError([NSString stringWithFormat:
+                    @"%@. Choose a smaller size for the assembled movie, or HEVC or ProRes", startError.localizedDescription]);
+            }
+            return NO;
+        }
+    }
+
+    for (NSUInteger index = 0; index < sourceMovies; index++)
     {
         TakeMovie *movie = [[TakeMovie alloc] init];
         movie.sourceTitle = titles[index];
@@ -219,7 +353,7 @@ static NSError *TakeError(NSString *description)
         if (![movie.recorder startWritingToURL:movie.url settings:own startTime:time error:&startError])
         {
             // Nothing of this take stays
-            for (TakeMovie *started in movies)
+            for (TakeMovie *started in assembledMovie ? [movies arrayByAddingObject:assembledMovie] : movies)
             {
                 [started.recorder finishAtTime:time completionHandler:^(NSError *ignored) {}];
             }
@@ -235,6 +369,7 @@ static NSError *TakeError(NSString *description)
     @synchronized (self)
     {
         _movies = [movies copy];
+        _assembledMovie = assembledMovie;
         _recording = YES;
     }
     return YES;
@@ -257,6 +392,26 @@ static NSError *TakeError(NSString *description)
     }
 }
 
+- (BOOL)wantsAssembledFrameAtTime:(NSTimeInterval)time
+{
+    TakeMovie *movie;
+    @synchronized (self)
+    {
+        movie = _recording ? _assembledMovie : nil;
+    }
+    return movie != nil && [movie.recorder wantsFrameAtTime:time];
+}
+
+- (void)appendAssembledTexture:(id<MTLTexture>)texture atTime:(NSTimeInterval)time
+{
+    TakeMovie *movie;
+    @synchronized (self)
+    {
+        movie = _recording ? _assembledMovie : nil;
+    }
+    [movie.recorder appendTexture:texture flipped:NO atTime:time];
+}
+
 - (void)finishAtTime:(NSTimeInterval)time completionHandler:(void (^)(NSError * _Nullable error))handler
 {
     NSArray<TakeMovie *> *movies;
@@ -271,7 +426,7 @@ static NSError *TakeError(NSString *description)
         }
         _recording = NO;
         _finishing = YES;
-        movies = _movies;
+        movies = _assembledMovie ? [_movies arrayByAddingObject:_assembledMovie] : _movies;
     }
 
     dispatch_group_t finished = dispatch_group_create();
