@@ -1,55 +1,62 @@
-# Simple — notes pour les agents
+# Simple Recorder — notes pour les agents
 
-Simple Client et Simple Server, les apps de démonstration de Syphon, passées à Metal. Simple Client enregistre en
-plus sa source dans un film, pilotable depuis sa fenêtre, en OSC (décrit par OSCQuery) et en MCP. Adrien (spectacle
-vivant, app eMotion) est l'unique utilisateur ; il parle français.
+Simple Recorder enregistre plusieurs sources Syphon à la fois, un film chacune sur une horloge commune, pilotable depuis
+sa fenêtre, en OSC (décrit par OSCQuery) et en MCP. Il vient du Simple Client de Syphon ; Simple Server, la source de test,
+est toujours là. Adrien (spectacle vivant, app eMotion) est l'unique utilisateur ; il parle français.
 
 ## Lire d'abord
 - `DECISIONS.md` — D1…, le pourquoi de chaque choix, et ce qui est remis à plus tard. **Ajouter une entrée pour tout choix structurant.**
 - `README.md` — fonctionnalités, adresses OSC, MCP.
-- `docs/superpowers/specs/2026-10-01-recorder-design.md` — le design de l'enregistreur.
+- `docs/superpowers/specs/2026-10-03-simple-recorder-design.md` — le design, en quatre parties. La partie 1 est faite ;
+  restent le film assemblé (dispositions), l'image NDI, le son NDI, chacune avec son plan dans `docs/superpowers/plans/`.
 
 ## Façon de travailler
 - Répondre en français. Code, commentaires et commits en anglais, avec la ligne `Co-Authored-By` de l'harnais.
-- `git push origin master` pousse sur GitHub (`cieadrienm/Simple`, privé) **et** sur Gitea (`amcb/simple`) : deux URLs de push. `upstream` = `Syphon/Simple`.
+- `git push origin master` pousse sur GitHub (`cieadrienm/Simple`, privé) **et** sur Gitea (`amcb/simple`). `upstream` = `Syphon/Simple`.
 - Fichiers dérivés de Syphon : garder leur en-tête BSD. Fichiers neufs : même licence, copyright Adrien Mondot.
 
 ## Build et tests
 ```
-swift test                    # le cœur (Recorder/), ~8 s, sans Xcode ni app lancée
+Scripts/syphon.sh             # une fois : build/Syphon.xcframework, dont Package.swift a besoin
+swift test                    # tout sauf Simple Server, ~30 s ; dessine aussi la fenêtre dans build/views/*.png
+Scripts/bundle.sh             # build/Simple Recorder.app (signée, MCP dedans) et build/Simple Server.app
 Tools/build.sh                # outils de vérification → build/tools
-build/tools/settings-test     # le popover de réglages et la barre d'outils, hors écran
-Scripts/bundle.sh             # apps Release signées + MCP → build/ (INSTALL=1 pour /Applications)
 ```
-`Simple.xcworkspace` pour travailler dans Xcode. Ajouter un fichier à l'app = l'ajouter à la main au `.pbxproj` de
-Simple Client (les fichiers de `Recorder/` y sont référencés un par un).
+Pas de projet Xcode pour Simple Recorder : c'est un paquet SwiftPM (`App/` en SwiftUI, `Recorder/` en Objective-C, `MCP/`).
+Simple Server se construit depuis `Simple.xcworkspace`.
 
 ## Règles qui ont coûté cher
-- **Ne jamais tuer les apps d'Adrien** (eMotion, OSCScore, AMKinectTrack tournent souvent). Lancer ses propres instances
-  et les tuer par PID. Pour tester : `SIMPLE_OSC_PORT=19230 SIMPLE_OSCQUERY_PORT=19231 "<app>/Contents/MacOS/Simple Client" -RecorderFolder <dossier>`.
-- **Simple Client sélectionne le premier serveur Syphon venu**, parfois eMotion : envoyer `/source "Simple Server"` avant d'enregistrer en test.
-- **Les réglages envoyés en OSC sont enregistrés dans les préférences d'Adrien** (`net.am-cb.simple-client`) : les remettre à
-  la fin (`/codec h264`, `/width 0`, `/height 0`, `/fps 0`, `/bitrate 0`, `/name ""`, `/folder ~/Movies`).
-- **Pas d'accès à l'écran** : vérifier par les outils de `Tools/` (image Syphon lue en mémoire, vue rendue hors écran, film relu).
+- **Ne jamais tuer les apps d'Adrien** (eMotion, OSCScore, AMKinectTrack tournent souvent). Lancer ses propres instances et
+  les tuer par PID. Pour tester : `SIMPLE_OSC_PORT=19230 SIMPLE_OSCQUERY_PORT=19231 "build/Simple Recorder.app/Contents/MacOS/Simple Recorder" -RecorderFolder <dossier>`,
+  avec des `Simple Server -ServerName A` (B, C…) comme sources.
+- **Les réglages et les sources envoyés en OSC sont enregistrés dans les préférences d'Adrien** (`net.am-cb.simple-recorder`) :
+  les remettre à la fin (vider les places : huit fois `/source/1 ""`), ou passer par des arguments (`-RecorderName x`), qui ne sont pas enregistrés.
+- **Pas d'accès à l'écran** : la fenêtre se vérifie par `build/views/*.png`, les films par `build/tools/movie-info`.
 - **Une image Syphon a sa première ligne en bas** (D7). Tout ce qui l'affiche ou l'enregistre la retourne.
-- **`[NSApp terminate:]` depuis un bloc de la file principale se bloque** s'il attend une fin qui arrive sur cette même file (D26) : passer par `performSelector:afterDelay:`.
+- **Syphon garde pour toujours l'entrée d'un serveur dont l'application a été tuée** (D42). Ne jamais supposer qu'un serveur listé vit.
+- **`[NSApp terminate:]` depuis un bloc de la file principale se bloque** s'il attend une fin qui arrive sur cette même file (D26).
 - **`-[AVAssetWriter cancelWriting]` supprime le fichier.** Ne jamais l'appeler sur un film qui a des images (D21).
-- **Bonjour et réseau : tester sur l'app signée** de `build/`, pas sur le binaire Debug ; l'autorisation « Réseau local » dépend de la signature.
+- **`registerDefaults` est global au processus** : `object(forKey:)` répond les valeurs enregistrées par n'importe quel contrôleur. Pour
+  savoir ce qui a été réglé, lire `persistentDomain(forName:)` (D36).
+- **Bonjour et réseau : tester sur l'app signée** de `build/` ; l'autorisation « Réseau local » dépend de la signature.
 - Une suite `swift test` qui échoue sur un port : une instance de test tourne peut-être encore sur ce port.
 - SwiftPM garde un module périmé quand on ajoute un en-tête à `Recorder/` : l'ajouter à `Recorder/RecorderKit.h`.
+- Le vérificateur de types de Swift cale sur les longues sommes de tableaux dans les tests : passer par une fonction.
 
 ## Architecture en une minute
-- `Common/SimpleImageView` — vue Metal qui affiche une texture, partagée par les deux apps.
-- `Recorder/` — sans Syphon : `FramePacer` (quelles images garder pour un fps maximum), `MovieRecorder` (texture Metal →
-  AVAssetWriter), `OSCMessage`, `OSCReceiver`, `OSCQueryServer` (celui d'eMotion, **ne pas le modifier ici**),
-  `RecorderController` (réglages, états, table des paramètres commune à la fenêtre, à l'OSC et à OSCQuery).
-- `Simple Client/` — `SimpleClientAppDelegate` (client Syphon, donne chaque image au contrôleur depuis le thread de Syphon),
-  `ToolbarDelegate`, `RecorderSettingsViewController` (popover construit en code).
+- `Recorder/` — Objective-C, sans Syphon : `FramePacer` (quelles images garder pour un fps maximum), `MovieRecorder` (texture
+  Metal → AVAssetWriter), `Take` (les films d'un enregistrement, leurs noms, leur horloge), `FrameSource.h` (ce qu'est une
+  source, un annuaire de sources), `RecorderController` (places, réglages, états, la table des paramètres commune à la
+  fenêtre, à l'OSC et à OSCQuery), `OSCMessage`, `OSCReceiver`, `OSCQueryServer` (celui d'eMotion, **ne pas le modifier ici**).
+- `App/` — Swift : `SimpleRecorderApp` (lancement, menu, fin propre), `SyphonSources` (seul fichier qui importe Syphon),
+  `RecorderModel` (ce que la fenêtre montre du contrôleur, qu'il relit à chaque notification), `Views/`.
 - `MCP/main.swift` — `simple-recorder-mcp`, stdio : lit par OSCQuery, écrit par OSC.
-- `Tools/` — `syphon-probe`, `gl-server`, `view-test`, `settings-test`, `movie-info`, `osc-send.py`, `mcp-call.py`.
+- `Simple Server/`, `Common/SimpleImageView` — la source de test, en Objective-C, dans son projet Xcode.
+- `Tools/` — `syphon-probe`, `gl-server`, `view-test`, `movie-info`, `osc-send.py`, `mcp-call.py`.
 
 ## Invariants
 - Tout ce que fait l'enregistreur est un paramètre de la table de `RecorderController` : une fonction nouvelle = une entrée,
   donc une adresse OSC, une description OSCQuery, un test, une ligne du README.
-- `Recorder/` n'importe jamais Syphon.
+- `Recorder/` n'importe jamais Syphon ; `App/` ne contient pas de logique d'enregistrement.
+- La fenêtre ne garde aucun état de l'enregistreur : elle montre le contrôleur, que l'OSC et le MCP changent aussi.
 - Tout nouveau comportement a un test ; un défaut corrigé a d'abord un test qui échoue.

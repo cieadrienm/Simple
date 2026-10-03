@@ -111,9 +111,11 @@ final class SyphonDirectory: NSObject, SourceDirectory {
         }
     }
 
-    func connectToSource(withTitle title: String, device: MTLDevice) -> FrameSource? {
-        // Of servers with the same title, the first
-        guard let description = servers.first(where: { Self.title(for: $0) == title }) else { return nil }
-        return SyphonSource(title: title, serverDescription: description, device: device)
+    func connectToSource(withTitle title: String, choice: UInt, device: MTLDevice) -> FrameSource? {
+        // A server whose application was killed stays in Syphon's directory, and is there again when it is
+        // relaunched: nothing says which is alive but the frames, so the caller goes round them
+        let candidates = servers.filter { Self.title(for: $0) == title }
+        guard !candidates.isEmpty else { return nil }
+        return SyphonSource(title: title, serverDescription: candidates[Int(choice) % candidates.count], device: device)
     }
 }

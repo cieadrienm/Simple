@@ -49,6 +49,9 @@ static const double kMaximumMegabitsPerSecond = 1000.0;
 static const NSTimeInterval kRefreshInterval = 0.25;
 // A source which has delivered no frame for this long is not online
 static const NSTimeInterval kOnlineTimeout = 1.0;
+// A source connected to which has delivered no frame for this long may be one which has gone without saying so:
+// another with its title is tried
+static const NSTimeInterval kSilenceTimeout = 2.0;
 
 #pragma mark - SourceDescription
 
@@ -77,6 +80,9 @@ static const NSTimeInterval kOnlineTimeout = 1.0;
 // Main thread: the place's movie in the current or last take
 @property (strong, nullable) TakeMovie *movie;
 @property (assign) BOOL inTake;
+// Main thread: which of the sources with its title it is connected to, and since when
+@property (assign) NSUInteger choice;
+@property (assign) NSTimeInterval connectionTime;
 @end
 
 @implementation RecorderPlace {
@@ -153,6 +159,15 @@ static const NSTimeInterval kOnlineTimeout = 1.0;
 - (BOOL)isOnline
 {
     return _online;
+}
+
+// When the last frame arrived, 0 if none has
+- (NSTimeInterval)lastFrameTime
+{
+    os_unfair_lock_lock(&_lock);
+    NSTimeInterval time = _lastFrameTime;
+    os_unfair_lock_unlock(&_lock);
+    return time;
 }
 
 - (double)fps
@@ -343,7 +358,7 @@ static NSString *StringFrom(NSArray *arguments)
         [self makeParameters];
 
         // The sources chosen when we were last used: those which are there are connected to, the others wait
-        _availableSources = [[directory availableSources] copy];
+        _availableSources = [self sourcesOf:directory];
         NSMutableArray<RecorderPlace *> *places = [NSMutableArray array];
         for (id title in [defaults arrayForKey:@"RecorderSources"])
         {
@@ -487,6 +502,15 @@ static NSString *StringFrom(NSArray *arguments)
     for (RecorderPlace *place in self.places)
     {
         [place measureAtTime:now];
+        // A source which says nothing may have gone without the directory knowing (its application was killed):
+        // the directory still lists it, beside the one which replaced it. Try the next with its title.
+        if (place.source && now - MAX(place.connectionTime, [place lastFrameTime]) > kSilenceTimeout)
+        {
+            [place.source stop];
+            place.source = nil;
+            place.choice++;
+            [self connectPlace:place];
+        }
     }
     for (NSString *key in keys.reverseObjectEnumerator)
     {
@@ -496,6 +520,22 @@ static NSString *StringFrom(NSArray *arguments)
 }
 
 #pragma mark Places
+
+// The directory's sources, each title once: a title is what a source is known by
+- (NSArray<SourceDescription *> *)sourcesOf:(id<SourceDirectory>)directory
+{
+    NSMutableArray<SourceDescription *> *sources = [NSMutableArray array];
+    NSMutableSet<NSString *> *titles = [NSMutableSet set];
+    for (SourceDescription *source in [directory availableSources])
+    {
+        if (![titles containsObject:source.title])
+        {
+            [titles addObject:source.title];
+            [sources addObject:source];
+        }
+    }
+    return sources;
+}
 
 // Connects the places whose source is there, and lets go of those whose source has gone
 - (void)connectPlaces
@@ -522,11 +562,12 @@ static NSString *StringFrom(NSArray *arguments)
 
 - (void)connectPlace:(RecorderPlace *)place
 {
-    id<FrameSource> source = [_directory connectToSourceWithTitle:place.title device:_device];
+    id<FrameSource> source = [_directory connectToSourceWithTitle:place.title choice:place.choice device:_device];
     if (source == nil)
     {
         return;
     }
+    place.connectionTime = CACurrentMediaTime();
     BOOL flipped = source.flipped;
     Take *take = _take;
     __weak RecorderPlace *weakPlace = place;
@@ -703,7 +744,7 @@ static NSString *StringFrom(NSArray *arguments)
 // The directory's sources have changed
 - (void)sourcesDidChange
 {
-    self.availableSources = [_directory availableSources];
+    self.availableSources = [self sourcesOf:_directory];
     // A source which has gone keeps its place, and is connected to again when it is back
     [self connectPlaces];
     if (_queryServerStarted)

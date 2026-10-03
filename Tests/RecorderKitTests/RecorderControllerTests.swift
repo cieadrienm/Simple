@@ -9,6 +9,8 @@ final class FakeSource: NSObject, FrameSource {
     var flipped = false
     var frameHandler: ((MTLTexture) -> Void)?
     private(set) var stopped = false
+    /// Which of the sources with its title it is
+    var choice = 0
 
     init(title: String) { self.title = title }
     func stop() { stopped = true }
@@ -28,9 +30,12 @@ final class FakeDirectory: NSObject, SourceDirectory {
         titles.map { SourceDescription(title: $0, detail: "Test", kind: .syphon) }
     }
 
-    func connectToSource(withTitle title: String, device: MTLDevice) -> FrameSource? {
-        guard titles.contains(title) else { return nil }
+    func connectToSource(withTitle title: String, choice: UInt, device: MTLDevice) -> FrameSource? {
+        // Several sources can have the same title: choice says which, going round
+        let count = titles.filter { $0 == title }.count
+        guard count > 0 else { return nil }
         let source = FakeSource(title: title)
+        source.choice = Int(choice) % count
         connections.append(source)
         return source
     }
@@ -221,6 +226,37 @@ final class RecorderControllerTests: XCTestCase {
         XCTAssertEqual(controller.availableSources.map(\.title), all)
         directory.setTitles(["Millumin"])
         XCTAssertEqual(controller.availableSources.map(\.title), ["Millumin"])
+    }
+
+    func testAvailableSourcesListEachTitleOnce() {
+        // Syphon lists a server which was killed for ever, and again when it is relaunched
+        directory.setTitles(["main view - eMotion", "A - Simple Server", "main view - eMotion"])
+        XCTAssertEqual(controller.availableSources.map(\.title), ["main view - eMotion", "A - Simple Server"])
+    }
+
+    func testASilentSourceGivesWayToTheNextOneWithItsTitle() throws {
+        // The first "C" is a server which was killed: Syphon still lists it, and it will never deliver a frame
+        directory.setTitles(["C - Simple Server", "C - Simple Server"])
+        XCTAssertTrue(controller.addSource(matching: "C - Simple Server"))
+        let dead = try XCTUnwrap(directory.source("C - Simple Server"))
+        XCTAssertEqual(dead.choice, 0, "the first with the title is tried first")
+
+        RunLoop.main.run(until: Date().addingTimeInterval(2.8))
+        let live = try XCTUnwrap(directory.source("C - Simple Server"))
+        XCTAssertTrue(dead.stopped, "the silent source is let go of")
+        XCTAssertEqual(live.choice, 1)
+        XCTAssertNotNil(live.frameHandler)
+
+        // This one delivers: it is kept
+        let texture = makeTexture()
+        let end = Date().addingTimeInterval(2.8)
+        while Date() < end {
+            live.deliver(texture)
+            RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+        }
+        XCTAssertFalse(live.stopped)
+        XCTAssertTrue(directory.source("C - Simple Server") === live)
+        XCTAssertTrue(controller.places[0].isOnline)
     }
 
     func testTickingConnectsAndUntickingDisconnects() {

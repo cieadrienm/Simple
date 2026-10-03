@@ -194,6 +194,11 @@ struct Recorder {
             titles = [source]
         }
         if let titles {
+            // Checked before anything is changed: a title which matches nothing must not leave the places empty
+            let available = try read().sources
+            for title in titles where !available.contains(where: { $0.range(of: title, options: .caseInsensitive) != nil }) {
+                throw RecorderError.failed("There is no source called \u{201C}\(title)\u{201D}. Available: \(available.joined(separator: ", ")). Nothing was changed.")
+            }
             // Emptying the first place moves the others up: eight times empties them all
             for _ in 1...Self.maximumPlaces { send("/source/1", [.string("")]) }
             for (index, title) in titles.enumerated() {

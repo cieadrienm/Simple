@@ -39,9 +39,9 @@ final class SyphonSourcesTests: XCTestCase {
         XCTAssertEqual(found.kind, .syphon)
         XCTAssertFalse(found.detail.isEmpty)
         XCTAssertGreaterThan(changes, 0, "the directory did not say its sources changed")
-        XCTAssertNil(directory.connectToSource(withTitle: "no such server", device: device))
+        XCTAssertNil(directory.connectToSource(withTitle: "no such server", choice: 0, device: device))
 
-        let source = try XCTUnwrap(directory.connectToSource(withTitle: found.title, device: device))
+        let source = try XCTUnwrap(directory.connectToSource(withTitle: found.title, choice: 0, device: device))
         defer { source.stop() }
         XCTAssertTrue(source.flipped)
         XCTAssertEqual(source.title, found.title)

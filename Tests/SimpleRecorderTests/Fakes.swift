@@ -8,6 +8,8 @@ final class FakeSource: NSObject, FrameSource {
     var flipped = false
     var frameHandler: ((MTLTexture) -> Void)?
     private(set) var stopped = false
+    /// Which of the sources with its title it is
+    var choice = 0
 
     init(title: String) { self.title = title }
     func stop() { stopped = true }
@@ -26,9 +28,12 @@ final class FakeDirectory: NSObject, SourceDirectory {
         titles.map { SourceDescription(title: $0, detail: $0.hasSuffix("eMotion") ? "eMotion" : "Simple Server", kind: .syphon) }
     }
 
-    func connectToSource(withTitle title: String, device: MTLDevice) -> FrameSource? {
-        guard titles.contains(title) else { return nil }
+    func connectToSource(withTitle title: String, choice: UInt, device: MTLDevice) -> FrameSource? {
+        // Several sources can have the same title: choice says which, going round
+        let count = titles.filter { $0 == title }.count
+        guard count > 0 else { return nil }
         let source = FakeSource(title: title)
+        source.choice = Int(choice) % count
         connections.append(source)
         return source
     }

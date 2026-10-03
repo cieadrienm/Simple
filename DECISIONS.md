@@ -47,9 +47,27 @@ D1–D4 ont été validées par Adrien (1ᵉʳ octobre 2026) ; les suivantes ont
 - **D33 — Un message OSC vers une adresse inconnue, ou en lecture seule, est signalé** (`/status/error`, zone d'état, titre de la fenêtre), au lieu d'être ignoré. Une adresse pas tout à fait juste est la cause habituelle d'un « il ne se passe rien ». Constaté le 2 octobre : dans OSCScore, un drapeau vide sur une piste dont l'adresse est écrite `/record <0>` envoie l'adresse littérale `/record <0>` sans argument (les arguments entre chevrons ne sont lus que dans le texte du drapeau), et l'enregistrement ne s'arrêtait pas, sans rien dire.
 - **D34 — Les erreurs s'affichent aussi dans le titre de la fenêtre** (« ⚠ … ») : 6 s pour un message refusé, jusqu'à l'enregistrement suivant pour un enregistrement qui a échoué. La zone d'état est masquée en fenêtre étroite.
 
+## Simple Recorder, partie 1 (3 octobre 2026)
+
+Design : `docs/superpowers/specs/2026-10-03-simple-recorder-design.md`. Validé par Adrien : sortie au choix à chaque prise, dispositions prêtes, son du NDI, renommage. Le reste ci-dessous a été tranché en autonomie.
+
+- **D35 — La fenêtre est en SwiftUI, l'app est construite par SwiftPM** (`App/`), comme OSCScore ; le cœur reste en Objective-C. Syphon arrive à SwiftPM en xcframework (`Scripts/syphon.sh`). Revient sur D10. Simple Client et son projet Xcode sont supprimés ; Simple Server garde le sien.
+- **D36 — macOS 14 minimum, identifiant `net.am-cb.simple-recorder`.** Les réglages de Simple Client sont recopiés une fois, depuis le domaine enregistré (pas via `object(forKey:)`, qui répond aussi les valeurs par défaut enregistrées par le contrôleur).
+- **D37 — Des places** : `/source/1` à `/source/8`, `/source` étant la première. Une source est connue par son titre ; seules les sources cochées sont connectées. Pour cocher une source il faut qu'elle soit là ; seules les places restaurées au lancement peuvent attendre la leur.
+- **D38 — Les places sont verrouillées pendant un enregistrement.** Écarté : modifier une prise en cours.
+- **D39 — Une prise, une horloge.** Tous les films partent du même instant zéro ; chacun commence par un vide jusqu'à sa première image. Une source qui n'envoie rien n'a pas de film, et ce n'est pas un échec ; une prise sans aucune image en est un.
+- **D40 — Noms** : `<nom>.mov` pour une source, `<nom> — <source>.mov` pour plusieurs ; sans nom, « Simple Recorder » et la date ; le même numéro pour tous les films d'une prise si l'un des noms existe.
+- **D41 — Un film qui échoue n'arrête pas les autres** ; `/status/failure` dit lequel. La prise ne s'arrête d'elle-même que si tous ont échoué.
+- **D42 — Une source muette depuis 2 s laisse la place à la suivante du même titre.** Quand l'application d'un serveur Syphon est tuée, Syphon garde son entrée pour toujours, et en ajoute une seconde quand elle est relancée ; rien ne dit laquelle vit, sinon les images. Le contrôleur fait donc le tour des entrées de même titre. Constaté de bout en bout ; sans cela une source relancée n'était jamais retrouvée.
+- **D43 — Le contrôleur annonce ses changements par une notification** (aussi quatre fois par seconde), que le modèle SwiftUI relit en entier. Écarté : du KVO sur chaque propriété de chaque place.
+- **D44 — Les vues se vérifient par rendu hors écran** (`build/views/*.png`, par `swift test`). Les tuiles Metal y sont noires : leur contenu se vérifie par les films.
+- **D45 — Le MCP vérifie les titres avant de changer les sources** : un titre inconnu ne doit pas laisser les places vides. Il ne propose plus `width`/`height` tant que le film assemblé n'existe pas.
+
 ## Constaté
 
 - ProRes 4444 échoue (« encode failed », -12912) sur du bruit dont l'alpha est aléatoire aussi ; le bruit opaque et une couleur unie à alpha aléatoire passent. Aucune image réelle n'est ainsi ; l'échec est signalé.
+- Huit sources 960 × 680 à 120 i/s enregistrées à 60 i/s en H.264 pendant 20 s : 1197 images par film, aucune perdue, 39 % d'un cœur.
+- Le zéro d'une prise précède d'environ 0,1 s la première image possible : le temps de créer les encodeurs. Les films restent alignés entre eux.
 - L'annonce Bonjour de l'app **signée** n'a pas été confirmée (le build Debug signé ad hoc l'est en 0,7 s) : sans doute l'autorisation « Réseau local », qu'Adrien doit accorder.
 
 ## Remis à plus tard (relecture du 1ᵉʳ octobre 2026)

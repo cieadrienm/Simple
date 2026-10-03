@@ -66,8 +66,11 @@ typedef NS_ENUM(NSInteger, FrameSourceKind) {
  */
 @protocol SourceDirectory <NSObject>
 - (NSArray<SourceDescription *> *)availableSources;
-// Connects to the source with this title. nil if there is none.
-- (nullable id<FrameSource>)connectToSourceWithTitle:(NSString *)title device:(id<MTLDevice>)device;
+// Connects to a source with this title. nil if there is none.
+// Several can have the same title — Syphon lists a server which was killed for ever, and again once it is
+// relaunched: choice says which of them, counting from 0 and going round. A caller which gets no frame from one
+// tries the next.
+- (nullable id<FrameSource>)connectToSourceWithTitle:(NSString *)title choice:(NSUInteger)choice device:(id<MTLDevice>)device;
 // Called on the main queue when availableSources has changed
 @property (copy, nullable) void (^changeHandler)(void);
 @end
