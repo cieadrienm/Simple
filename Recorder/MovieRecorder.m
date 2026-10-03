@@ -461,6 +461,14 @@ static NSError *RecorderError(NSString *description)
     });
 }
 
+- (BOOL)wantsFrameAtTime:(NSTimeInterval)time
+{
+    os_unfair_lock_lock(&_lock);
+    BOOL wants = _recording && [_pacer wouldKeepFrameAtTime:time];
+    os_unfair_lock_unlock(&_lock);
+    return wants;
+}
+
 // A frame leaves the recorder, written or not
 - (void)frameDoneWritten:(BOOL)written
 {

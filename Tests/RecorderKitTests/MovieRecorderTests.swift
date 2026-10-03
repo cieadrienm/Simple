@@ -300,6 +300,21 @@ final class MovieRecorderTests: XCTestCase {
         XCTAssertEqual(try MovieInfo(url).duration, 2.0, accuracy: 0.05)
     }
 
+    func testWantsFrameFollowsTheFrameRate() throws {
+        let recorder = MovieRecorder(device: device)
+        XCTAssertFalse(recorder.wantsFrame(atTime: 0), "it is not recording")
+        try recorder.startWriting(to: folder.appendingPathComponent("wants.mov"), settings: settings(fps: 30), startTime: 100)
+        let texture = makeTexture(width: 320, height: 180)
+        XCTAssertTrue(recorder.wantsFrame(atTime: 100))
+        XCTAssertTrue(recorder.wantsFrame(atTime: 100), "asking takes nothing")
+        append(texture, to: recorder, at: 100)
+        XCTAssertFalse(recorder.wantsFrame(atTime: 100 + 1.0 / 120), "the frame of this thirtieth of a second is written")
+        XCTAssertTrue(recorder.wantsFrame(atTime: 100 + 1.0 / 30))
+        XCTAssertFalse(recorder.wantsFrame(atTime: 99), "before the movie begins")
+        finish(recorder, at: 100.1)
+        XCTAssertFalse(recorder.wantsFrame(atTime: 101))
+    }
+
     func testWriterIsReadyBeforeTheFirstFrameWhenTheSizeIsGiven() throws {
         // Creating the writer takes a moment: when it waits for the first frame, the frames which follow are lost
         let recorder = MovieRecorder(device: device)

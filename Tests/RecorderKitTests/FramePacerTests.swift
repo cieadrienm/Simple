@@ -77,4 +77,23 @@ final class FramePacerTests: XCTestCase {
     func testWithoutAnOriginTheFirstFrameIsZero() {
         assertEqual(keptTimes(cap: 30, origin: .nan, arrivals: [1234.5, 1234.6]), [0, 0.1])
     }
+
+    // MARK: Asking without deciding
+
+    func testWouldKeepAgreesWithTheDecisionAndChangesNothing() {
+        for (cap, origin) in [(0.0, Double.nan), (30.0, Double.nan), (0.0, 100.0), (30.0, 100.0)] {
+            let asked = FramePacer(framesPerSecond: cap, origin: origin)
+            let plain = FramePacer(framesPerSecond: cap, origin: origin)
+            for arrival in [100.0, 100.001, 100.02, 100.034, 100.034, 100.5, 100.49, 101.0] {
+                // Asked any number of times, the answer is the same, and the decision is what it would have been
+                let would = asked.wouldKeepFrame(atTime: arrival)
+                XCTAssertEqual(asked.wouldKeepFrame(atTime: arrival), would)
+                let decision = asked.decisionForFrame(atTime: arrival)
+                let reference = plain.decisionForFrame(atTime: arrival)
+                XCTAssertEqual(decision.keep.boolValue, would, "cap \(cap), origin \(origin), arrival \(arrival)")
+                XCTAssertEqual(decision.keep.boolValue, reference.keep.boolValue)
+                XCTAssertEqual(decision.time, reference.time, accuracy: 1e-9)
+            }
+        }
+    }
 }

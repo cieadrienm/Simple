@@ -77,6 +77,9 @@ extern NSString * const MovieRecorderErrorDomain;
 // flipped: the first row of the texture is the bottom of the picture, as it is for Syphon frames.
 // time: when the frame arrived, in seconds, on the clock also used for finishAtTime:completionHandler:
 - (void)appendTexture:(id<MTLTexture>)texture flipped:(BOOL)flipped atTime:(NSTimeInterval)time;
+// NO if a frame arriving now would not be written: the movie's frame rate would discard it, or nothing is being
+// recorded. For a caller which has work to do to make the frame. Can be called from any thread.
+- (BOOL)wantsFrameAtTime:(NSTimeInterval)time;
 // Stops accepting frames, waits for those being encoded, and finishes the file so that the movie lasts until time.
 // handler is called on the main queue, with an error if the movie could not be written. If no frame was received
 // there is no file, and that is reported as an error.

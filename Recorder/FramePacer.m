@@ -60,6 +60,24 @@
     return self;
 }
 
+- (BOOL)wouldKeepFrameAtTime:(double)time
+{
+    if (!_started)
+    {
+        return YES;
+    }
+    double elapsed = time - _firstTime;
+    if (elapsed < 0.0)
+    {
+        return NO;
+    }
+    if (_framesPerSecond == 0.0)
+    {
+        return elapsed > _lastTime;
+    }
+    return llround(elapsed * _framesPerSecond) > _lastSlot;
+}
+
 - (FramePacerDecision)decisionForFrameAtTime:(double)time
 {
     if (!_started)

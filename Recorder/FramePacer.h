@@ -52,6 +52,9 @@ typedef struct {
 - (instancetype)initWithFramesPerSecond:(double)framesPerSecond origin:(double)origin;
 // time: when the frame arrived, in seconds.
 - (FramePacerDecision)decisionForFrameAtTime:(double)time;
+// Whether decisionForFrameAtTime: would keep a frame arriving now, without deciding anything: what follows is
+// decided as if this had not been asked.
+- (BOOL)wouldKeepFrameAtTime:(double)time;
 @end
 
 NS_ASSUME_NONNULL_END
