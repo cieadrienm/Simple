@@ -3,14 +3,12 @@
 set -e
 cd "$(dirname "$0")/.."
 OUT="$PWD/build/tools"
-xcodebuild -workspace Simple.xcworkspace -scheme Syphon -configuration Debug -derivedDataPath build/DerivedData build -quiet
+xcodebuild -project Syphon-Framework/Syphon.xcodeproj -scheme Syphon -configuration Debug -derivedDataPath build/DerivedData build -quiet
 FRAMEWORKS="$PWD/build/DerivedData/Build/Products/Debug"
 mkdir -p "$OUT"
 COMMON="-fobjc-arc -F $FRAMEWORKS -framework Syphon -framework Cocoa -framework Metal -Wl,-rpath,$FRAMEWORKS"
 clang $COMMON -framework IOSurface Tools/syphon-probe.m -o "$OUT/syphon-probe"
 clang $COMMON -framework OpenGL Tools/gl-server.m -o "$OUT/gl-server"
 clang $COMMON -I Common -framework MetalKit -framework QuartzCore Tools/view-test.m Common/SimpleImageView.m -o "$OUT/view-test"
-clang -fobjc-arc -I Recorder -I "Simple Client" -framework Cocoa -framework Metal -framework AVFoundation -framework CoreVideo -framework CoreMedia -framework QuartzCore \
-    Tools/settings-test.m "Simple Client/RecorderSettingsViewController.m" "Simple Client/ToolbarDelegate.m" Recorder/*.m -o "$OUT/settings-test"
 swiftc -O Tools/movie-info.swift -o "$OUT/movie-info"
 echo "built: $OUT"

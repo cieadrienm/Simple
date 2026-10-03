@@ -29,75 +29,93 @@
 
 #import <Foundation/Foundation.h>
 #import <Metal/Metal.h>
+#import "FrameSource.h"
 #import "OSCMessage.h"
 
 NS_ASSUME_NONNULL_BEGIN
 
+// Posted on the main thread whenever something the recorder shows has changed, and four times a second for what
+// changes by itself (the time recorded, frame counts, frame rates). The object is the controller.
+extern NSNotificationName const RecorderControllerDidChangeNotification;
+
+// The most sources which can be recorded at once
+extern const NSUInteger RecorderMaximumPlaces;
+
 /*
- What the recorder needs to know about the sources which can be recorded. Used on the main thread.
+ One of the sources chosen for recording, and what it is doing. Places are numbered from 1, in the order chosen.
  */
-@protocol RecorderSourceProvider <NSObject>
-// The sources available, as they are shown to the user
-- (NSArray<NSString *> *)sourceTitles;
-- (nullable NSString *)selectedSourceTitle;
-- (nullable NSString *)selectedSourceApplicationName;
-// index is into sourceTitles
-- (void)selectSourceAtIndex:(NSInteger)index;
+@interface RecorderPlace : NSObject
+@property (readonly, copy) NSString *title;
+// YES if the source is delivering frames. A source which has gone keeps its place, and takes it again when it is back.
+@property (readonly, getter=isOnline) BOOL online;
+@property (readonly) NSInteger width;
+@property (readonly) NSInteger height;
+@property (readonly) double fps;
+// Its movie in the take being recorded, or in the last one. Empty if it has none.
+@property (readonly, copy) NSString *file;
+@property (readonly) NSUInteger frames;
+@property (readonly) NSUInteger dropped;
+// The last frame it delivered, to show it
+@property (readonly, nullable) id<MTLTexture> latestFrame;
+// YES if the first row of latestFrame is the bottom of the picture
+@property (readonly) BOOL flipped;
 @end
 
 /*
- Records the frames of the selected source to movie files.
+ Records the sources chosen, each to its own movie.
 
  Everything the recorder can do is a parameter with an OSC address: the properties below are those parameters, the
- window binds to them, OSC messages set them, and OSCQuery describes and reads them. See -startNetworkWithOSCPort:...
+ window shows them, OSC messages set them, and OSCQuery describes and reads them. See -startNetworkWithOSCPort:...
 
- Use on the main thread, except for -frameReceived:
+ Use on the main thread.
  */
 @interface RecorderController : NSObject
 - (instancetype)initWithDevice:(id<MTLDevice>)device
-                sourceProvider:(id<RecorderSourceProvider>)provider
+                     directory:(id<SourceDirectory>)directory
                       defaults:(NSUserDefaults *)defaults;
 
 // Settings. They are saved in the defaults, and a change applies to the next recording.
 @property (nonatomic, copy) NSString *codec;      // /codec: one of +[MovieRecorderSettings codecNames]
-@property (nonatomic, assign) NSInteger width;    // /width, /height: 0 for the size of the source
-@property (nonatomic, assign) NSInteger height;
+@property (nonatomic, assign) NSInteger width;    // /width, /height: kept for the assembled movie; a source's
+@property (nonatomic, assign) NSInteger height;   //   own movie is always the size of the source
 @property (nonatomic, assign) double fps;         // /fps: 0 for every frame of the source
 @property (nonatomic, assign) double bitrate;     // /bitrate: megabits per second, 0 for automatic
 @property (nonatomic, copy) NSString *folder;     // /folder
-@property (nonatomic, copy) NSString *name;       // /name: empty for the source's application and the date
+@property (nonatomic, copy) NSString *name;       // /name: empty for the app's name and the date
+
+// The sources chosen, in order: /source/1 … /source/8 (and /source, which is /source/1). They are saved in the
+// defaults. Only these are connected to. They cannot be changed while recording.
+@property (readonly, copy) NSArray<RecorderPlace *> *places;
+// The sources which can be chosen
+@property (readonly, copy) NSArray<SourceDescription *> *availableSources;
+// Chooses the source with this title or, failing that, the first whose title contains it, whatever the case, and
+// gives it the next place. YES if it is chosen (it may have been already).
+- (BOOL)addSourceMatching:(NSString *)title;
+// Gives a place (from 1) to a source: the source which had the place leaves it; a source chosen already moves
+// there; a place beyond the last is the next one. An empty title empties the place, and those after it move up.
+- (BOOL)setSourceMatching:(NSString *)title atPlace:(NSUInteger)place;
+- (void)removeSourceAtPlace:(NSUInteger)place;
+- (BOOL)moveSourceFromPlace:(NSUInteger)from toPlace:(NSUInteger)to;
+// These return NO, with the reason in error, if there is no such source or place, if every place is taken, or
+// while recording.
 
 // State
 @property (readonly, copy) NSString *state;       // /status/state: "idle", "recording" or "finishing"
 @property (readonly, getter=isRecording) BOOL recording;
 @property (readonly) NSTimeInterval elapsed;      // /status/elapsed
-@property (readonly) NSUInteger frames;           // /status/frames
-@property (readonly) NSUInteger dropped;          // /status/dropped
-@property (readonly, copy) NSString *file;        // /status/file: being written, or the last one written
-@property (readonly, copy) NSString *error;       // /status/error: the last error, empty when a recording starts
+@property (readonly) NSUInteger frames;           // /status/frames: frames of the first place's movie
+@property (readonly) NSUInteger dropped;          // /status/dropped: frames dropped in all the movies
+@property (readonly, copy) NSString *file;        // /status/file: the first place's movie
+@property (nonatomic, readonly, copy) NSString *error; // /status/error: the last error, empty when a recording starts
 // /status/failure: why the last recording ended, if it was not as asked: it failed, or had nothing to write. Empty
 // otherwise, and when a recording starts. Unlike error, a message which was refused meanwhile does not change it.
 @property (readonly, copy) NSString *recordingError;
-@property (readonly) NSInteger sourceWidth;       // /status/source/width, height, fps
-@property (readonly) NSInteger sourceHeight;
-@property (readonly) double sourceFPS;
 
-// Starts recording the selected source. Returns NO, with the reason in error, if it could not.
+// Starts recording the sources chosen. Returns NO, with the reason in error, if it could not.
 - (BOOL)start;
-// handler is called once the file is finished, or at once if there is no recording
+// handler is called once the movies are finished, or at once if there is no recording
 - (void)stopWithCompletionHandler:(nullable void (^)(void))handler;
 - (void)toggle;
-
-// Selects the source with this title or, failing that, the first whose title contains it, whatever the case.
-// Returns NO, with the reason in error, if there is no such source.
-- (BOOL)selectSourceMatching:(NSString *)title;
-// Tell the recorder when the sources available change, and when another is selected.
-// chosen: the user selected the source. NO when the selection moved by itself because the selected source went
-// away: the recorder then selects the source which was chosen again when it comes back.
-- (void)sourcesDidChange;
-- (void)sourceSelectionDidChange:(BOOL)chosen;
-// Give the recorder every frame of the selected source. Can be called from any thread.
-- (void)frameReceived:(id<MTLTexture>)frame;
 
 // Listens for OSC messages on a UDP port, and describes the parameters to OSCQuery clients over HTTP, announced by
 // Bonjour under name. Each port is the first which is free from the one given. Returns NO if either could not start.

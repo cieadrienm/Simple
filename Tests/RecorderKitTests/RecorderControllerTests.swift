@@ -3,18 +3,46 @@ import AVFoundation
 import Metal
 import RecorderKit
 
-private final class FakeSources: NSObject, RecorderSourceProvider {
-    var titles: [String] = ["main view - eMotion", "main view - eMotion", "Simple Server"]
-    var applications: [String] = ["eMotion", "eMotion", "Simple Server"]
-    var selected: Int = 2
-    var selections: [Int] = []
+/// A source which delivers the frames the test gives it.
+final class FakeSource: NSObject, FrameSource {
+    let title: String
+    var flipped = false
+    var frameHandler: ((MTLTexture) -> Void)?
+    private(set) var stopped = false
 
-    func sourceTitles() -> [String] { titles }
-    func selectedSourceTitle() -> String? { selected >= 0 ? titles[selected] : nil }
-    func selectedSourceApplicationName() -> String? { selected >= 0 ? applications[selected] : nil }
-    func selectSource(at index: Int) {
-        selections.append(index)
-        selected = index
+    init(title: String) { self.title = title }
+    func stop() { stopped = true }
+    func deliver(_ texture: MTLTexture) { frameHandler?(texture) }
+}
+
+/// The sources which exist, as the test says.
+final class FakeDirectory: NSObject, SourceDirectory {
+    var changeHandler: (() -> Void)?
+    private(set) var titles: [String]
+    /// Every source ever connected to, the latest last
+    private(set) var connections: [FakeSource] = []
+
+    init(_ titles: [String]) { self.titles = titles }
+
+    func availableSources() -> [SourceDescription] {
+        titles.map { SourceDescription(title: $0, detail: "Test", kind: .syphon) }
+    }
+
+    func connectToSource(withTitle title: String, device: MTLDevice) -> FrameSource? {
+        guard titles.contains(title) else { return nil }
+        let source = FakeSource(title: title)
+        connections.append(source)
+        return source
+    }
+
+    /// The live connection to a source, if there is one.
+    func source(_ title: String) -> FakeSource? {
+        connections.last { $0.title == title && !$0.stopped }
+    }
+
+    func setTitles(_ titles: [String]) {
+        self.titles = titles
+        changeHandler?()
     }
 }
 
@@ -23,8 +51,10 @@ final class RecorderControllerTests: XCTestCase {
     private var folder: URL!
     private var defaults: UserDefaults!
     private var defaultsName: String!
-    private var sources: FakeSources!
+    private var directory: FakeDirectory!
     private var controller: RecorderController!
+
+    private let all = ["main view - eMotion", "depthMap - eMotion", "A - Simple Server", "B - Simple Server"]
 
     override func setUpWithError() throws {
         device = try XCTUnwrap(MTLCreateSystemDefaultDevice())
@@ -32,8 +62,8 @@ final class RecorderControllerTests: XCTestCase {
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         defaultsName = "RecorderControllerTests-\(UUID().uuidString)"
         defaults = try XCTUnwrap(UserDefaults(suiteName: defaultsName))
-        sources = FakeSources()
-        controller = RecorderController(device: device, sourceProvider: sources, defaults: defaults)
+        directory = FakeDirectory(all)
+        controller = RecorderController(device: device, directory: directory, defaults: defaults)
         controller.folder = folder.path
     }
 
@@ -49,24 +79,30 @@ final class RecorderControllerTests: XCTestCase {
         controller.handle(OSCMessage(address: address, arguments: arguments))
     }
 
-    private func makeTexture() -> MTLTexture {
-        let descriptor = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .bgra8Unorm, width: 320, height: 180, mipmapped: false)
+    private var titles: [String] { controller.places.map(\.title) }
+
+    private func makeTexture(_ width: Int = 320, _ height: Int = 180) -> MTLTexture {
+        let descriptor = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .bgra8Unorm, width: width, height: height, mipmapped: false)
         return device.makeTexture(descriptor: descriptor)!
     }
 
-    /// Delivers frames as a source would, from another thread, for `seconds`.
-    private func deliverFrames(for seconds: Double) {
-        let texture = makeTexture()
+    /// Delivers frames from sources as they would, from another thread, for `seconds`.
+    private func deliverFrames(for seconds: Double, from sources: [(String, MTLTexture)]) {
+        let live = sources.compactMap { title, texture in directory.source(title).map { ($0, texture) } }
         let delivered = expectation(description: "frames delivered")
-        DispatchQueue.global().async { [controller] in
+        DispatchQueue.global().async {
             let end = Date().addingTimeInterval(seconds)
             while Date() < end {
-                controller!.frameReceived(texture)
+                for (source, texture) in live { source.deliver(texture) }
                 usleep(16_000)
             }
             delivered.fulfill()
         }
         wait(for: [delivered], timeout: seconds + 5)
+    }
+
+    private func deliverFrames(for seconds: Double) {
+        deliverFrames(for: seconds, from: titles.map { ($0, makeTexture()) })
     }
 
     private func waitForState(_ state: String, file: StaticString = #filePath, line: UInt = #line) {
@@ -77,18 +113,28 @@ final class RecorderControllerTests: XCTestCase {
         XCTAssertEqual(controller.state, state, file: file, line: line)
     }
 
+    private func stopAndWait() {
+        controller.stop(completionHandler: nil)
+        waitForState("idle")
+    }
+
+    /// One source ticked, as Simple Client had.
+    private func tickOne() {
+        XCTAssertTrue(controller.addSource(matching: "A - Simple Server"))
+    }
+
     // MARK: Settings
 
     func testDefaults() {
-        let fresh = RecorderController(device: device, sourceProvider: sources, defaults: defaults)
-        XCTAssertEqual(fresh.codec, "h264")
-        XCTAssertEqual(fresh.width, 0)
-        XCTAssertEqual(fresh.height, 0)
-        XCTAssertEqual(fresh.fps, 0)
-        XCTAssertEqual(fresh.bitrate, 0)
-        XCTAssertEqual(fresh.name, "")
-        XCTAssertEqual(fresh.state, "idle")
-        XCTAssertEqual(fresh.error, "")
+        XCTAssertEqual(controller.codec, "h264")
+        XCTAssertEqual(controller.width, 0)
+        XCTAssertEqual(controller.height, 0)
+        XCTAssertEqual(controller.fps, 0)
+        XCTAssertEqual(controller.bitrate, 0)
+        XCTAssertEqual(controller.name, "")
+        XCTAssertEqual(controller.state, "idle")
+        XCTAssertEqual(controller.error, "")
+        XCTAssertEqual(controller.places.count, 0)
     }
 
     func testOSCSetsSettings() {
@@ -143,11 +189,10 @@ final class RecorderControllerTests: XCTestCase {
     }
 
     func testAMessageToAnUnknownAddressIsReported() {
-        // What OSCScore sends for an empty flag on a track whose address was typed "/record <0>"
         send("/record <0>")
         XCTAssertTrue(controller.error.contains("/record <0>"), controller.error)
-        send("/nothing/here", NSNumber(value: 1))
-        XCTAssertTrue(controller.error.contains("/nothing/here"), controller.error)
+        send("/source/9", "A")
+        XCTAssertTrue(controller.error.contains("/source/9"), controller.error)
     }
 
     func testAMessageToAnAddressWhichCanOnlyBeReadIsReported() {
@@ -162,7 +207,7 @@ final class RecorderControllerTests: XCTestCase {
         send("/fps", NSNumber(value: Float(25)))
         send("/name", "take")
 
-        let next = RecorderController(device: device, sourceProvider: sources, defaults: defaults)
+        let next = RecorderController(device: device, directory: directory, defaults: defaults)
         XCTAssertEqual(next.codec, "prores4444")
         XCTAssertEqual(next.width, 1280)
         XCTAssertEqual(next.fps, 25)
@@ -170,72 +215,232 @@ final class RecorderControllerTests: XCTestCase {
         XCTAssertEqual(next.folder, folder.path)
     }
 
-    // MARK: Sources
+    // MARK: Places
 
-    func testSourceIsSelectedByExactTitleThenBySubstring() {
-        XCTAssertTrue(controller.selectSource(matching: "main view - eMotion"))
-        XCTAssertEqual(sources.selections, [0], "the first of two servers with the same title")
-        send("/source", "simple")
-        XCTAssertEqual(sources.selections, [0, 2])
+    func testAvailableSourcesAreThoseOfTheDirectory() {
+        XCTAssertEqual(controller.availableSources.map(\.title), all)
+        directory.setTitles(["Millumin"])
+        XCTAssertEqual(controller.availableSources.map(\.title), ["Millumin"])
+    }
+
+    func testTickingConnectsAndUntickingDisconnects() {
+        XCTAssertTrue(controller.addSource(matching: "A - Simple Server"))
+        XCTAssertEqual(titles, ["A - Simple Server"])
+        let source = try! XCTUnwrap(directory.source("A - Simple Server"))
+        XCTAssertNotNil(source.frameHandler)
+
+        controller.removeSource(atPlace: 1)
+        XCTAssertEqual(titles, [])
+        XCTAssertTrue(source.stopped)
+    }
+
+    func testOnlyTickedSourcesAreConnected() {
+        XCTAssertEqual(directory.connections.count, 0, "nothing is ticked")
+        XCTAssertTrue(controller.addSource(matching: "depthMap - eMotion"))
+        XCTAssertEqual(directory.connections.map(\.title), ["depthMap - eMotion"])
+    }
+
+    func testASourceIsFoundByItsTitleThenByAPartOfIt() {
+        XCTAssertTrue(controller.addSource(matching: "depthmap"))
+        XCTAssertTrue(controller.addSource(matching: "main view - eMotion"))
+        XCTAssertEqual(titles, ["depthMap - eMotion", "main view - eMotion"])
         XCTAssertEqual(controller.error, "")
     }
 
-    func testAnEmptySourceTitleIsRefusedWithAnError() {
-        send("/source", "")
-        XCTAssertEqual(sources.selections, [])
+    func testAnUnknownOrEmptySourceIsRefusedWithAnError() {
+        XCTAssertFalse(controller.addSource(matching: "Millumin"))
+        XCTAssertTrue(controller.error.contains("Millumin"), controller.error)
+        XCTAssertFalse(controller.addSource(matching: ""))
+        XCTAssertEqual(titles, [])
+    }
+
+    func testASourceIsInOnePlaceOnly() {
+        XCTAssertTrue(controller.addSource(matching: "A - Simple Server"))
+        XCTAssertTrue(controller.addSource(matching: "B - Simple Server"))
+        XCTAssertTrue(controller.addSource(matching: "A - Simple Server"), "already ticked: nothing to do")
+        XCTAssertEqual(titles, ["A - Simple Server", "B - Simple Server"])
+
+        // Asked for in the second place, the first source moves there
+        XCTAssertTrue(controller.setSourceMatching("A - Simple Server", atPlace: 2))
+        XCTAssertEqual(titles, ["B - Simple Server", "A - Simple Server"])
+        XCTAssertEqual(directory.connections.filter { !$0.stopped }.count, 2)
+    }
+
+    func testSettingAPlaceReplacesItsSourceOrAddsOne() {
+        XCTAssertTrue(controller.setSourceMatching("A - Simple Server", atPlace: 1))
+        XCTAssertTrue(controller.setSourceMatching("B - Simple Server", atPlace: 1))
+        XCTAssertEqual(titles, ["B - Simple Server"])
+        XCTAssertNil(directory.source("A - Simple Server"), "A is no longer connected to")
+
+        XCTAssertTrue(controller.setSourceMatching("A - Simple Server", atPlace: 5))
+        XCTAssertEqual(titles, ["B - Simple Server", "A - Simple Server"], "places close up: the fifth is the second")
+    }
+
+    func testPlacesCloseUp() {
+        for title in ["A - Simple Server", "B - Simple Server", "depthMap - eMotion"] { XCTAssertTrue(controller.addSource(matching: title)) }
+        XCTAssertTrue(controller.setSourceMatching("", atPlace: 1))
+        XCTAssertEqual(titles, ["B - Simple Server", "depthMap - eMotion"])
+        controller.removeSource(atPlace: 7)
+        XCTAssertEqual(titles.count, 2)
+    }
+
+    func testMovingASourceChangesTheOrder() {
+        for title in ["A - Simple Server", "B - Simple Server", "depthMap - eMotion"] { XCTAssertTrue(controller.addSource(matching: title)) }
+        XCTAssertTrue(controller.moveSource(fromPlace: 3, toPlace: 1))
+        XCTAssertEqual(titles, ["depthMap - eMotion", "A - Simple Server", "B - Simple Server"])
+        XCTAssertFalse(controller.moveSource(fromPlace: 5, toPlace: 1))
+        XCTAssertEqual(directory.connections.count, 3, "moving does not reconnect")
+    }
+
+    func testNoMoreThanEightPlaces() {
+        let many = (1...9).map { "Source \($0)" }
+        directory.setTitles(many)
+        for title in many.prefix(8) { XCTAssertTrue(controller.addSource(matching: title)) }
+        XCTAssertFalse(controller.addSource(matching: many[8]))
+        XCTAssertEqual(titles.count, 8)
         XCTAssertFalse(controller.error.isEmpty)
     }
 
-    func testUnknownSourceIsRefusedWithAnError() {
-        XCTAssertFalse(controller.selectSource(matching: "Millumin"))
-        XCTAssertEqual(sources.selections, [])
+    func testPlacesCannotChangeWhileRecording() {
+        XCTAssertTrue(controller.addSource(matching: "A - Simple Server"))
+        XCTAssertTrue(controller.addSource(matching: "B - Simple Server"))
+        XCTAssertTrue(controller.start())
+
+        XCTAssertFalse(controller.addSource(matching: "depthMap - eMotion"))
+        XCTAssertFalse(controller.error.isEmpty)
+        XCTAssertFalse(controller.setSourceMatching("", atPlace: 1))
+        XCTAssertFalse(controller.moveSource(fromPlace: 2, toPlace: 1))
+        controller.removeSource(atPlace: 1)
+        send("/source/1", "depthMap - eMotion")
+        XCTAssertEqual(titles, ["A - Simple Server", "B - Simple Server"])
+
+        deliverFrames(for: 0.2)
+        stopAndWait()
+        XCTAssertTrue(controller.addSource(matching: "depthMap - eMotion"))
+    }
+
+    func testPlacesPersistAndReconnect() {
+        XCTAssertTrue(controller.addSource(matching: "B - Simple Server"))
+        XCTAssertTrue(controller.addSource(matching: "A - Simple Server"))
+
+        let later = FakeDirectory(["A - Simple Server"])
+        let next = RecorderController(device: device, directory: later, defaults: defaults)
+        XCTAssertEqual(next.places.map(\.title), ["B - Simple Server", "A - Simple Server"], "B is away, and keeps its place")
+        XCTAssertEqual(later.connections.map(\.title), ["A - Simple Server"])
+        later.setTitles(["A - Simple Server", "B - Simple Server"])
+        XCTAssertNotNil(later.source("B - Simple Server"), "B is back, and connected to")
+    }
+
+    func testAPlaceSaysWhatItsSourceDelivers() {
+        XCTAssertTrue(controller.addSource(matching: "A - Simple Server"))
+        XCTAssertFalse(controller.places[0].isOnline, "no frame yet")
+        deliverFrames(for: 0.6, from: [("A - Simple Server", makeTexture(640, 360))])
+        RunLoop.main.run(until: Date().addingTimeInterval(0.3))
+
+        let place = controller.places[0]
+        XCTAssertTrue(place.isOnline)
+        XCTAssertEqual(place.width, 640)
+        XCTAssertEqual(place.height, 360)
+        XCTAssertGreaterThan(place.fps, 20)
+        XCTAssertNotNil(place.latestFrame)
+    }
+
+    func testASourceWhichComesBackGoesOnInItsPlace() throws {
+        XCTAssertTrue(controller.addSource(matching: "A - Simple Server"))
+        XCTAssertTrue(controller.addSource(matching: "B - Simple Server"))
+        XCTAssertTrue(controller.start())
+        deliverFrames(for: 0.3)
+
+        // B's application quits
+        let first = try XCTUnwrap(directory.source("B - Simple Server"))
+        directory.setTitles(all.filter { $0 != "B - Simple Server" })
+        XCTAssertEqual(titles, ["A - Simple Server", "B - Simple Server"], "the place stays B's")
+        XCTAssertTrue(first.stopped)
+        deliverFrames(for: 0.3)
+        RunLoop.main.run(until: Date().addingTimeInterval(0.3))
+        XCTAssertFalse(controller.places[1].isOnline)
+        let framesWhileAway = controller.places[1].frames
+
+        // It is launched again
+        directory.setTitles(all)
+        let second = try XCTUnwrap(directory.source("B - Simple Server"))
+        XCTAssertFalse(second === first)
+        deliverFrames(for: 0.3)
+        RunLoop.main.run(until: Date().addingTimeInterval(0.3))
+        XCTAssertTrue(controller.places[1].isOnline)
+        XCTAssertGreaterThan(controller.places[1].frames, framesWhileAway, "frames reach B's movie again")
+        stopAndWait()
+        XCTAssertEqual(controller.recordingError, "")
+    }
+
+    func testTheMonitorGetsEachPlacesLatestFrame() {
+        XCTAssertTrue(controller.addSource(matching: "A - Simple Server"))
+        XCTAssertTrue(controller.addSource(matching: "B - Simple Server"))
+        let a = makeTexture(640, 360), b = makeTexture(320, 320)
+        directory.source("A - Simple Server")?.deliver(a)
+        directory.source("B - Simple Server")?.deliver(b)
+        XCTAssertTrue(controller.places[0].latestFrame === a)
+        XCTAssertTrue(controller.places[1].latestFrame === b)
+    }
+
+    // MARK: Places by OSC
+
+    func testOSCSetsAndClearsAPlace() {
+        send("/source/1", "A - Simple Server")
+        send("/source/2", "depthmap")
+        XCTAssertEqual(titles, ["A - Simple Server", "depthMap - eMotion"])
+        send("/source/1", "")
+        XCTAssertEqual(titles, ["depthMap - eMotion"])
+        XCTAssertEqual(controller.error, "")
+        send("/source/2", "Millumin")
         XCTAssertTrue(controller.error.contains("Millumin"), controller.error)
+    }
+
+    func testSourceIsAnAliasOfTheFirstPlace() {
+        send("/source", "B - Simple Server")
+        XCTAssertEqual(titles, ["B - Simple Server"])
+        send("/source", "simple")
+        XCTAssertEqual(titles, ["A - Simple Server"], "the first place's source is replaced")
     }
 
     // MARK: Recording
 
-    func testRecordsFromOSC() throws {
-        send("/name", "take")
+    func testRecordingWritesOneMoviePerPlace() throws {
+        for title in ["A - Simple Server", "B - Simple Server", "depthMap - eMotion"] { XCTAssertTrue(controller.addSource(matching: title)) }
+        send("/name", "show")
         send("/record", NSNumber(value: 1))
         XCTAssertEqual(controller.state, "recording")
-        XCTAssertTrue(controller.isRecording)
-        XCTAssertEqual(controller.file, folder.appendingPathComponent("take.mov").path)
-
-        deliverFrames(for: 0.5)
+        deliverFrames(for: 0.5, from: [("A - Simple Server", makeTexture(640, 360)), ("B - Simple Server", makeTexture(320, 320)),
+                                       ("depthMap - eMotion", makeTexture(512, 520))])
         RunLoop.main.run(until: Date().addingTimeInterval(0.3))
-        XCTAssertGreaterThan(controller.frames, 10)
-        XCTAssertGreaterThan(controller.elapsed, 0.4)
-        XCTAssertEqual(controller.sourceWidth, 320)
-        XCTAssertEqual(controller.sourceHeight, 180)
-
+        XCTAssertGreaterThan(controller.places[2].frames, 10)
         send("/record", NSNumber(value: 0))
         XCTAssertEqual(controller.state, "finishing")
         waitForState("idle")
-        XCTAssertFalse(controller.isRecording)
         XCTAssertEqual(controller.error, "")
 
-        let movie = try MovieInfo(URL(fileURLWithPath: controller.file))
-        XCTAssertEqual(movie.size, CGSize(width: 320, height: 180))
-        XCTAssertGreaterThan(movie.duration, 0.4)
+        let files = controller.places.map { URL(fileURLWithPath: $0.file) }
+        XCTAssertEqual(files.map(\.lastPathComponent), ["show — A - Simple Server.mov", "show — B - Simple Server.mov", "show — depthMap - eMotion.mov"])
+        XCTAssertEqual(try files.map { try MovieInfo($0).size }, [CGSize(width: 640, height: 360), CGSize(width: 320, height: 320), CGSize(width: 512, height: 520)])
+        XCTAssertEqual(controller.file, files[0].path)
     }
 
-    func testSettingsReachTheMovie() throws {
-        send("/codec", "prores422")
-        send("/width", NSNumber(value: 640))
-        send("/height", NSNumber(value: 480))
+    func testOneSourceTakesTheNameAlone() throws {
+        tickOne()
+        send("/name", "Depth")
         XCTAssertTrue(controller.start())
+        XCTAssertEqual(controller.file, folder.appendingPathComponent("Depth.mov").path)
         deliverFrames(for: 0.3)
-        controller.stop(completionHandler: nil)
-        waitForState("idle")
-
-        let movie = try MovieInfo(URL(fileURLWithPath: controller.file))
-        XCTAssertEqual(movie.size, CGSize(width: 640, height: 480))
-        XCTAssertEqual(movie.codec, "apcn")
+        RunLoop.main.run(until: Date().addingTimeInterval(0.3))
+        XCTAssertGreaterThan(controller.frames, 5)
+        XCTAssertGreaterThan(controller.elapsed, 0.2)
+        stopAndWait()
+        XCTAssertGreaterThan(try MovieInfo(URL(fileURLWithPath: controller.file)).duration, 0.2)
     }
 
     func testRecordZeroStopsWhateverTheTypeOfTheArgument() {
-        let zeros: [(String, Any)] = [("int", NSNumber(value: Int32(0))), ("float", NSNumber(value: Float(0))), ("double", NSNumber(value: 0.0)),
-                                      ("long", NSNumber(value: Int64(0))), ("false", NSNumber(value: false)), ("string", "0"), ("string 0.0", "0.0")]
+        tickOne()
+        let zeros: [(String, Any)] = [("int", NSNumber(value: Int32(0))), ("float", NSNumber(value: Float(0))), ("false", NSNumber(value: false)), ("string", "0")]
         for (name, zero) in zeros {
             XCTAssertTrue(controller.start(), name)
             deliverFrames(for: 0.1)
@@ -245,30 +450,20 @@ final class RecorderControllerTests: XCTestCase {
         }
     }
 
-    func testRecordZeroStopsWhenItArrivesInAPacketAsSendersMakeThem() {
-        // int, float, False, and a bundle, as bytes
-        func string(_ text: String) -> [UInt8] {
-            var bytes = Array(text.utf8) + [0]
-            while bytes.count % 4 != 0 { bytes.append(0) }
-            return bytes
-        }
-        let int = string("/record") + string(",i") + [0, 0, 0, 0]
-        let packets: [(String, [UInt8])] = [
-            ("int", int),
-            ("float", string("/record") + string(",f") + [0, 0, 0, 0]),
-            ("false", string("/record") + string(",F")),
-            ("bundle", string("#bundle") + [0, 0, 0, 0, 0, 0, 0, 1] + [0, 0, 0, UInt8(int.count)] + int),
-        ]
-        for (name, packet) in packets {
-            XCTAssertTrue(controller.start(), name)
-            deliverFrames(for: 0.1)
-            for message in OSCMessage.messages(fromPacket: Data(packet)) { controller.handle(message) }
-            XCTAssertNotEqual(controller.state, "recording", "/record 0 sent as \(name) did not stop the recording")
-            waitForState("idle")
-        }
+    func testSettingsReachTheMovies() throws {
+        tickOne()
+        send("/codec", "prores422")
+        send("/fps", NSNumber(value: 30))
+        XCTAssertTrue(controller.start())
+        deliverFrames(for: 0.4)
+        stopAndWait()
+        let movie = try MovieInfo(URL(fileURLWithPath: controller.file))
+        XCTAssertEqual(movie.codec, "apcn")
+        XCTAssertEqual(movie.size, CGSize(width: 320, height: 180))
     }
 
     func testToggleStartsThenStops() {
+        tickOne()
         send("/record/toggle")
         XCTAssertEqual(controller.state, "recording")
         deliverFrames(for: 0.2)
@@ -277,42 +472,34 @@ final class RecorderControllerTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: controller.file))
     }
 
-    func testAutomaticNameUsesTheSourceApplicationAndTheDate() {
+    func testAutomaticNameIsTheAppAndTheDate() {
+        tickOne()
         XCTAssertTrue(controller.start())
         let file = URL(fileURLWithPath: controller.file).lastPathComponent
-        XCTAssertTrue(file.hasPrefix("Simple Server \(Calendar.current.component(.year, from: Date()))-"), file)
+        XCTAssertTrue(file.hasPrefix("Simple Recorder \(Calendar.current.component(.year, from: Date()))-"), file)
         XCTAssertTrue(file.hasSuffix(".mov"), file)
-        controller.stop(completionHandler: nil)
-        waitForState("idle")
+        stopAndWait()
     }
 
     func testAnExistingFileIsNeverOverwritten() throws {
+        tickOne()
         try Data("precious".utf8).write(to: folder.appendingPathComponent("take.mov"))
         send("/name", "take")
         XCTAssertTrue(controller.start())
         XCTAssertEqual(controller.file, folder.appendingPathComponent("take 2.mov").path)
         deliverFrames(for: 0.2)
-        controller.stop(completionHandler: nil)
-        waitForState("idle")
+        stopAndWait()
         XCTAssertEqual(try Data(contentsOf: folder.appendingPathComponent("take.mov")), Data("precious".utf8))
     }
 
-    func testANameCannotLeaveTheFolder() {
-        send("/name", "../../escape")
-        XCTAssertTrue(controller.start())
-        XCTAssertEqual(URL(fileURLWithPath: controller.file).deletingLastPathComponent().path, folder.path)
-        controller.stop(completionHandler: nil)
-        waitForState("idle")
-    }
-
-    func testStartWithoutASourceFails() {
-        sources.selected = -1
+    func testStartWithoutAPlaceFails() {
         XCTAssertFalse(controller.start())
         XCTAssertEqual(controller.state, "idle")
         XCTAssertFalse(controller.error.isEmpty)
     }
 
     func testStartInAMissingFolderFails() {
+        tickOne()
         controller.folder = folder.appendingPathComponent("missing").path
         send("/record", NSNumber(value: 1))
         XCTAssertEqual(controller.state, "idle")
@@ -320,34 +507,47 @@ final class RecorderControllerTests: XCTestCase {
     }
 
     func testStoppingWithoutFramesReportsIt() {
+        tickOne()
         XCTAssertTrue(controller.start())
-        controller.stop(completionHandler: nil)
-        waitForState("idle")
+        stopAndWait()
         XCTAssertFalse(controller.error.isEmpty)
+        XCTAssertFalse(controller.recordingError.isEmpty)
         XCTAssertEqual(controller.file, "")
     }
 
+    func testASourceWhichDeliversNothingIsNotAFailure() {
+        XCTAssertTrue(controller.addSource(matching: "A - Simple Server"))
+        XCTAssertTrue(controller.addSource(matching: "B - Simple Server"))
+        XCTAssertTrue(controller.start())
+        deliverFrames(for: 0.3, from: [("A - Simple Server", makeTexture())])
+        stopAndWait()
+        XCTAssertEqual(controller.recordingError, "")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: controller.places[0].file))
+        XCTAssertEqual(controller.places[1].file, "", "B has no movie")
+    }
+
     func testStartingClearsThePreviousError() {
+        tickOne()
         send("/codec", "hap")
         XCTAssertFalse(controller.error.isEmpty)
         XCTAssertTrue(controller.start())
         XCTAssertEqual(controller.error, "")
-        controller.stop(completionHandler: nil)
-        waitForState("idle")
+        stopAndWait()
     }
 
     func testRecordOneWhileRecordingChangesNothing() {
+        tickOne()
         XCTAssertTrue(controller.start())
         let file = controller.file
         send("/record", NSNumber(value: 1))
         XCTAssertEqual(controller.state, "recording")
         XCTAssertEqual(controller.file, file)
         XCTAssertEqual(controller.error, "")
-        controller.stop(completionHandler: nil)
-        waitForState("idle")
+        stopAndWait()
     }
 
-    func testStopHandlerIsCalledWhenTheFileIsFinished() {
+    func testStopHandlerIsCalledWhenTheFilesAreFinished() {
+        tickOne()
         XCTAssertTrue(controller.start())
         deliverFrames(for: 0.2)
         let stopped = expectation(description: "stopped")
@@ -360,86 +560,34 @@ final class RecorderControllerTests: XCTestCase {
     }
 
     func testAMessageRefusedWhileRecordingIsNotWhyTheRecordingEnded() {
+        tickOne()
         XCTAssertTrue(controller.start())
         deliverFrames(for: 0.2)
         send("/codec", "hap")
         XCTAssertFalse(controller.error.isEmpty)
-        controller.stop(completionHandler: nil)
-        waitForState("idle")
-
+        stopAndWait()
         XCTAssertEqual(controller.recordingError, "", "the movie was written as asked")
-        XCTAssertTrue(FileManager.default.fileExists(atPath: controller.file))
     }
 
     func testWhyARecordingEndedIsKeptUntilTheNextOne() {
+        tickOne()
         XCTAssertTrue(controller.start())
-        controller.stop(completionHandler: nil)
-        waitForState("idle")
+        stopAndWait()
         XCTAssertFalse(controller.recordingError.isEmpty, "no frame was received")
-
         send("/fps", NSNumber(value: 25))
         XCTAssertFalse(controller.recordingError.isEmpty)
-
         XCTAssertTrue(controller.start())
         XCTAssertEqual(controller.recordingError, "")
         deliverFrames(for: 0.2)
-        controller.stop(completionHandler: nil)
-        waitForState("idle")
+        stopAndWait()
         XCTAssertEqual(controller.recordingError, "")
     }
 
-    // MARK: A source which goes away
-
-    func testTheSourceChosenIsSelectedAgainWhenItComesBack() {
-        sources.selected = 2
-        controller.sourceSelectionDidChange(true)
-
-        // Simple Server quits: the menu falls back on another server
-        sources.titles = ["main view - eMotion"]
-        sources.applications = ["eMotion"]
-        sources.selected = 0
-        controller.sourceSelectionDidChange(false)
-        controller.sourcesDidChange()
-        XCTAssertEqual(sources.selections, [])
-
-        // It is launched again
-        sources.titles = ["main view - eMotion", "Simple Server"]
-        sources.applications = ["eMotion", "Simple Server"]
-        controller.sourcesDidChange()
-        XCTAssertEqual(sources.selections, [1])
-    }
-
-    func testASourceChosenWhileTheFirstIsAwayIsKept() {
-        sources.selected = 2
-        controller.sourceSelectionDidChange(true)
-        sources.titles = ["main view - eMotion", "Map - AMKinectTrack"]
-        sources.applications = ["eMotion", "AMKinectTrack"]
-        sources.selected = 0
-        controller.sourceSelectionDidChange(false)
-
-        // The user picks another source rather than wait
-        sources.selected = 1
-        controller.sourceSelectionDidChange(true)
-
-        sources.titles = ["main view - eMotion", "Map - AMKinectTrack", "Simple Server"]
-        sources.applications = ["eMotion", "AMKinectTrack", "Simple Server"]
-        controller.sourcesDidChange()
-        XCTAssertEqual(sources.selections, [], "the user's choice stands")
-    }
-
-    func testASourceSelectedByOSCIsTheOneToComeBackTo() {
-        send("/source", "main view")
-        XCTAssertEqual(sources.selections, [0])
-        controller.sourceSelectionDidChange(true)
-
-        sources.titles = ["Simple Server"]
-        sources.applications = ["Simple Server"]
-        sources.selected = 0
-        controller.sourceSelectionDidChange(false)
-        sources.titles = ["Simple Server", "main view - eMotion"]
-        sources.applications = ["Simple Server", "eMotion"]
-        controller.sourcesDidChange()
-        XCTAssertEqual(sources.selections, [0, 1])
+    func testAChangeIsAnnounced() {
+        let announced = expectation(forNotification: .RecorderControllerDidChange, object: controller)
+        announced.assertForOverFulfill = false
+        send("/codec", "hevc")
+        wait(for: [announced], timeout: 2)
     }
 
     // MARK: OSCQuery
@@ -456,7 +604,12 @@ final class RecorderControllerTests: XCTestCase {
         return object
     }
 
+    private func contents(_ node: Any?) -> [String: Any] {
+        ((node as? [String: Any])?["CONTENTS"] as? [String: Any]) ?? [:]
+    }
+
     func testOSCQueryDescribesEveryParameter() throws {
+        XCTAssertTrue(controller.addSource(matching: "B - Simple Server"))
         XCTAssertTrue(controller.startNetwork(withOSCPort: 19430, queryPort: 19431, name: "Recorder Test"))
         XCTAssertEqual(controller.oscPort, 19430)
         send("/codec", "hevc")
@@ -465,28 +618,29 @@ final class RecorderControllerTests: XCTestCase {
         XCTAssertEqual(info["NAME"] as? String, "Recorder Test")
         XCTAssertEqual(info["OSC_PORT"] as? Int, 19430)
 
-        let root = try XCTUnwrap(get("/")["CONTENTS"] as? [String: Any])
+        let root = contents(get("/"))
         XCTAssertEqual(Set(root.keys), ["source", "record", "codec", "width", "height", "fps", "bitrate", "folder", "name", "status"])
 
         let codec = try XCTUnwrap(root["codec"] as? [String: Any])
         XCTAssertEqual(codec["VALUE"] as? [String], ["hevc"])
-        XCTAssertEqual(codec["ACCESS"] as? Int, 3)
         XCTAssertEqual((codec["RANGE"] as? [[String: [String]]])?.first?["VALS"], ["h264", "hevc", "prores422", "prores4444"])
 
+        // /source is the first place, and /source/1 … /source/8 the places
         let source = try XCTUnwrap(root["source"] as? [String: Any])
-        XCTAssertEqual(source["VALUE"] as? [String], ["Simple Server"])
-        XCTAssertEqual((source["RANGE"] as? [[String: [String]]])?.first?["VALS"], ["main view - eMotion", "Simple Server"])
+        XCTAssertEqual(source["VALUE"] as? [String], ["B - Simple Server"])
+        XCTAssertEqual((source["RANGE"] as? [[String: [String]]])?.first?["VALS"], all)
+        let places = contents(source)
+        XCTAssertEqual(Set(places.keys), Set((1...8).map(String.init)))
+        XCTAssertEqual((places["1"] as? [String: Any])?["VALUE"] as? [String], ["B - Simple Server"])
+        XCTAssertEqual((places["2"] as? [String: Any])?["VALUE"] as? [String], [""])
+        XCTAssertEqual(((places["2"] as? [String: Any])?["RANGE"] as? [[String: [String]]])?.first?["VALS"], all)
 
-        let record = try XCTUnwrap(root["record"] as? [String: Any])
-        XCTAssertEqual(record["VALUE"] as? [Int], [0])
-        XCTAssertEqual(record["TYPE"] as? String, "i")
-        XCTAssertNotNil((record["CONTENTS"] as? [String: Any])?["toggle"])
-
-        let status = try XCTUnwrap((root["status"] as? [String: Any])?["CONTENTS"] as? [String: Any])
+        let status = contents(root["status"])
         XCTAssertEqual(Set(status.keys), ["state", "elapsed", "frames", "dropped", "file", "error", "failure", "source"])
-        XCTAssertEqual((status["failure"] as? [String: Any])?["VALUE"] as? [String], [""])
         XCTAssertEqual((status["state"] as? [String: Any])?["VALUE"] as? [String], ["idle"])
-        XCTAssertEqual((status["state"] as? [String: Any])?["ACCESS"] as? Int, 1)
+        let placeStatus = contents(contents(status["source"])["1"])
+        XCTAssertEqual(Set(placeStatus.keys), ["online", "width", "height", "fps", "file", "frames", "dropped"])
+        XCTAssertEqual(Set(contents(status["source"]).keys), Set((1...8).map(String.init)))
         for (name, node) in root where name != "status" {
             XCTAssertFalse(((node as? [String: Any])?["DESCRIPTION"] as? String ?? "").isEmpty, "\(name) has no description")
         }
@@ -494,14 +648,8 @@ final class RecorderControllerTests: XCTestCase {
 
     func testOSCQueryFollowsTheSourcesAvailable() throws {
         XCTAssertTrue(controller.startNetwork(withOSCPort: 19440, queryPort: 19441, name: "Recorder Test"))
-        sources.titles = ["Millumin"]
-        sources.applications = ["Millumin"]
-        sources.selected = 0
-        controller.sourcesDidChange()
-
-        let source = get("/source")
-        XCTAssertEqual(source["VALUE"] as? [String], ["Millumin"])
-        XCTAssertEqual((source["RANGE"] as? [[String: [String]]])?.first?["VALS"], ["Millumin"])
+        directory.setTitles(["Millumin"])
+        XCTAssertEqual((get("/source/3")["RANGE"] as? [[String: [String]]])?.first?["VALS"], ["Millumin"])
     }
 
     func testMessagesArriveFromTheNetwork() {

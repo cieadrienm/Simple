@@ -206,8 +206,9 @@ static NSError *TakeError(NSString *description)
         own.width = [size isKindOfClass:[NSValue class]] ? (NSInteger)[size sizeValue].width : 0;
         own.height = [size isKindOfClass:[NSValue class]] ? (NSInteger)[size sizeValue].height : 0;
 
+        __weak TakeMovie *weakMovie = movie;
         movie.recorder.failureHandler = ^(NSError *failure) {
-            movie.error = failure;
+            weakMovie.error = failure;
             Take *take = weakSelf;
             if (take.movieFailureHandler)
             {

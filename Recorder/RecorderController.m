@@ -29,10 +29,14 @@
 
 #import "RecorderController.h"
 #import "MovieRecorder.h"
+#import "Take.h"
 #import "OSCReceiver.h"
 #import "OSCQueryServer.h"
 #import <QuartzCore/QuartzCore.h>
 #import <os/lock.h>
+
+NSNotificationName const RecorderControllerDidChangeNotification = @"RecorderControllerDidChangeNotification";
+const NSUInteger RecorderMaximumPlaces = 8;
 
 static NSString * const kStateIdle = @"idle";
 static NSString * const kStateRecording = @"recording";
@@ -41,8 +45,171 @@ static NSString * const kStateFinishing = @"finishing";
 static const NSInteger kMaximumDimension = 16384;
 static const double kMaximumFramesPerSecond = 240.0;
 static const double kMaximumMegabitsPerSecond = 1000.0;
-// How often the counters which change while recording are refreshed
+// How often what changes by itself is refreshed
 static const NSTimeInterval kRefreshInterval = 0.25;
+// A source which has delivered no frame for this long is not online
+static const NSTimeInterval kOnlineTimeout = 1.0;
+
+#pragma mark - SourceDescription
+
+@implementation SourceDescription
+
+- (instancetype)initWithTitle:(NSString *)title detail:(NSString *)detail kind:(FrameSourceKind)kind
+{
+    self = [super init];
+    if (self)
+    {
+        _title = [title copy];
+        _detail = [detail copy];
+        _kind = kind;
+    }
+    return self;
+}
+
+@end
+
+#pragma mark - RecorderPlace
+
+@interface RecorderPlace ()
+@property (readwrite, copy) NSString *title;
+// Main thread: the connection to the source, nil while it is away
+@property (strong, nullable) id<FrameSource> source;
+// Main thread: the place's movie in the current or last take
+@property (strong, nullable) TakeMovie *movie;
+@property (assign) BOOL inTake;
+@end
+
+@implementation RecorderPlace {
+    // Guards what a frame changes
+    os_unfair_lock _lock;
+    id<MTLTexture> _latestFrame;
+    BOOL _flipped;
+    NSInteger _width;
+    NSInteger _height;
+    NSUInteger _frameCount;
+    NSTimeInterval _lastFrameTime;
+    // The source's index in the take being recorded, NSNotFound otherwise
+    NSUInteger _takeIndex;
+    // Main thread: the frame rate, measured from one refresh to the next
+    NSUInteger _measuredFrameCount;
+    NSTimeInterval _measuredTime;
+    double _fps;
+    BOOL _online;
+}
+
+- (instancetype)initWithTitle:(NSString *)title
+{
+    self = [super init];
+    if (self)
+    {
+        _title = [title copy];
+        _lock = OS_UNFAIR_LOCK_INIT;
+        _takeIndex = NSNotFound;
+    }
+    return self;
+}
+
+// Any thread. Returns the source's index in the take, NSNotFound if it is not being recorded.
+- (NSUInteger)receivedFrame:(id<MTLTexture>)frame flipped:(BOOL)flipped atTime:(NSTimeInterval)time
+{
+    os_unfair_lock_lock(&_lock);
+    _latestFrame = frame;
+    _flipped = flipped;
+    _width = frame.width;
+    _height = frame.height;
+    _frameCount++;
+    _lastFrameTime = time;
+    NSUInteger index = _takeIndex;
+    os_unfair_lock_unlock(&_lock);
+    return index;
+}
+
+- (void)setTakeIndex:(NSUInteger)index
+{
+    os_unfair_lock_lock(&_lock);
+    _takeIndex = index;
+    os_unfair_lock_unlock(&_lock);
+}
+
+// Main thread, at each refresh
+- (void)measureAtTime:(NSTimeInterval)now
+{
+    os_unfair_lock_lock(&_lock);
+    NSUInteger frameCount = _frameCount;
+    NSTimeInterval lastFrameTime = _lastFrameTime;
+    os_unfair_lock_unlock(&_lock);
+
+    _online = self.source != nil && lastFrameTime > 0.0 && now - lastFrameTime < kOnlineTimeout;
+    if (_measuredTime > 0.0 && now > _measuredTime)
+    {
+        double measured = (frameCount - _measuredFrameCount) / (now - _measuredTime);
+        // Smoothed, as few frames arrive between two refreshes
+        _fps = (_fps == 0.0 || measured == 0.0) ? measured : 0.5 * _fps + 0.5 * measured;
+    }
+    _measuredFrameCount = frameCount;
+    _measuredTime = now;
+}
+
+- (BOOL)isOnline
+{
+    return _online;
+}
+
+- (double)fps
+{
+    return _fps;
+}
+
+- (NSInteger)width
+{
+    os_unfair_lock_lock(&_lock);
+    NSInteger width = _width;
+    os_unfair_lock_unlock(&_lock);
+    return width;
+}
+
+- (NSInteger)height
+{
+    os_unfair_lock_lock(&_lock);
+    NSInteger height = _height;
+    os_unfair_lock_unlock(&_lock);
+    return height;
+}
+
+- (id<MTLTexture>)latestFrame
+{
+    os_unfair_lock_lock(&_lock);
+    id<MTLTexture> frame = _latestFrame;
+    os_unfair_lock_unlock(&_lock);
+    return frame;
+}
+
+- (BOOL)flipped
+{
+    os_unfair_lock_lock(&_lock);
+    BOOL flipped = _flipped;
+    os_unfair_lock_unlock(&_lock);
+    return flipped;
+}
+
+- (NSString *)file
+{
+    // A movie which received no frame has no file
+    TakeMovie *movie = self.movie;
+    return (movie && (self.inTake || movie.framesWritten > 0)) ? movie.url.path : @"";
+}
+
+- (NSUInteger)frames
+{
+    return self.movie.framesWritten;
+}
+
+- (NSUInteger)dropped
+{
+    return self.movie.framesDropped;
+}
+
+@end
 
 #pragma mark - Parameters
 
@@ -96,17 +263,19 @@ static NSString *StringFrom(NSArray *arguments)
 
 @interface RecorderController ()
 @property (readwrite, copy) NSString *state;
-@property (readwrite, copy) NSString *file;
-@property (readwrite, copy) NSString *error;
+@property (nonatomic, readwrite, copy) NSString *error;
 @property (readwrite, copy) NSString *recordingError;
+@property (readwrite, copy) NSArray<RecorderPlace *> *places;
+@property (readwrite, copy) NSArray<SourceDescription *> *availableSources;
 @property (readwrite) NSInteger oscPort;
 @property (readwrite) NSInteger oscQueryPort;
 @end
 
 @implementation RecorderController {
-    __weak id<RecorderSourceProvider> _provider;
+    id<MTLDevice> _device;
+    id<SourceDirectory> _directory;
     NSUserDefaults *_defaults;
-    MovieRecorder *_recorder;
+    Take *_take;
     NSArray<RecorderParameter *> *_parameters;
     NSDictionary<NSString *, RecorderParameter *> *_parametersByAddress;
     OSCReceiver *_receiver;
@@ -115,25 +284,13 @@ static NSString *StringFrom(NSArray *arguments)
     id<NSObject> _activity;
     NSTimeInterval _startTime;
     NSTimeInterval _lastElapsed;
-    // The title of the source the user selected, which the selection returns to
-    NSString *_chosenSourceTitle;
     NSMutableArray<void (^)(void)> *_stopHandlers;
-
-    // Guards what -frameReceived: updates
-    os_unfair_lock _lock;
-    NSInteger _frameWidth;
-    NSInteger _frameHeight;
-    NSUInteger _frameCount;
-    // On the main thread: the frame rate, measured from one refresh to the next
-    NSUInteger _measuredFrameCount;
-    NSTimeInterval _measuredTime;
-    double _sourceFPS;
 }
 
 + (BOOL)automaticallyNotifiesObserversForKey:(NSString *)key
 {
     // These are refreshed together, by -refresh
-    if ([@[@"elapsed", @"frames", @"dropped", @"sourceWidth", @"sourceHeight", @"sourceFPS"] containsObject:key])
+    if ([@[@"elapsed", @"frames", @"dropped", @"file"] containsObject:key])
     {
         return NO;
     }
@@ -146,19 +303,19 @@ static NSString *StringFrom(NSArray *arguments)
 }
 
 - (instancetype)initWithDevice:(id<MTLDevice>)device
-                sourceProvider:(id<RecorderSourceProvider>)provider
+                     directory:(id<SourceDirectory>)directory
                       defaults:(NSUserDefaults *)defaults
 {
     self = [super init];
     if (self)
     {
-        _provider = provider;
+        _device = device;
+        _directory = directory;
         _defaults = defaults;
-        _lock = OS_UNFAIR_LOCK_INIT;
         _state = kStateIdle;
-        _file = @"";
         _error = @"";
         _recordingError = @"";
+        _places = @[];
         _stopHandlers = [NSMutableArray array];
 
         NSString *movies = NSSearchPathForDirectoriesInDomains(NSMoviesDirectory, NSUserDomainMask, YES).firstObject;
@@ -177,13 +334,29 @@ static NSString *StringFrom(NSArray *arguments)
         _folder = [[defaults stringForKey:@"RecorderFolder"] copy];
         _name = [[defaults stringForKey:@"RecorderName"] copy];
 
-        _recorder = [[MovieRecorder alloc] initWithDevice:device];
+        _take = [[Take alloc] initWithDevice:device];
         __weak RecorderController *weakSelf = self;
-        _recorder.failureHandler = ^(NSError *error) {
-            [weakSelf recordingEndedWithError:error];
+        _take.movieFailureHandler = ^(NSUInteger index, NSError *error) {
+            [weakSelf movieAtIndex:index failedWithError:error];
         };
 
         [self makeParameters];
+
+        // The sources chosen when we were last used: those which are there are connected to, the others wait
+        _availableSources = [[directory availableSources] copy];
+        NSMutableArray<RecorderPlace *> *places = [NSMutableArray array];
+        for (id title in [defaults arrayForKey:@"RecorderSources"])
+        {
+            if ([title isKindOfClass:[NSString class]] && [title length] > 0 && places.count < RecorderMaximumPlaces)
+            {
+                [places addObject:[[RecorderPlace alloc] initWithTitle:title]];
+            }
+        }
+        _places = [places copy];
+        [self connectPlaces];
+        directory.changeHandler = ^{
+            [weakSelf sourcesDidChange];
+        };
 
         NSTimer *timer = [NSTimer timerWithTimeInterval:kRefreshInterval repeats:YES block:^(NSTimer *timer) {
             [weakSelf refresh];
@@ -197,7 +370,16 @@ static NSString *StringFrom(NSArray *arguments)
 - (void)dealloc
 {
     [_refreshTimer invalidate];
+    for (RecorderPlace *place in _places)
+    {
+        [place.source stop];
+    }
     [self stopNetwork];
+}
+
+- (void)changed
+{
+    [[NSNotificationCenter defaultCenter] postNotificationName:RecorderControllerDidChangeNotification object:self];
 }
 
 #pragma mark Settings
@@ -206,42 +388,55 @@ static NSString *StringFrom(NSArray *arguments)
 {
     _codec = [codec copy];
     [_defaults setObject:_codec forKey:@"RecorderCodec"];
+    [self changed];
 }
 
 - (void)setWidth:(NSInteger)width
 {
     _width = MIN(MAX(width, 0), kMaximumDimension);
     [_defaults setInteger:_width forKey:@"RecorderWidth"];
+    [self changed];
 }
 
 - (void)setHeight:(NSInteger)height
 {
     _height = MIN(MAX(height, 0), kMaximumDimension);
     [_defaults setInteger:_height forKey:@"RecorderHeight"];
+    [self changed];
 }
 
 - (void)setFps:(double)fps
 {
     _fps = isfinite(fps) ? MIN(MAX(fps, 0.0), kMaximumFramesPerSecond) : 0.0;
     [_defaults setDouble:_fps forKey:@"RecorderFPS"];
+    [self changed];
 }
 
 - (void)setBitrate:(double)bitrate
 {
     _bitrate = isfinite(bitrate) ? MIN(MAX(bitrate, 0.0), kMaximumMegabitsPerSecond) : 0.0;
     [_defaults setDouble:_bitrate forKey:@"RecorderBitrate"];
+    [self changed];
 }
 
 - (void)setFolder:(NSString *)folder
 {
     _folder = [(folder ?: @"").stringByExpandingTildeInPath copy];
     [_defaults setObject:_folder forKey:@"RecorderFolder"];
+    [self changed];
 }
 
 - (void)setName:(NSString *)name
 {
     _name = [name ?: @"" copy];
     [_defaults setObject:_name forKey:@"RecorderName"];
+    [self changed];
+}
+
+- (void)setError:(NSString *)error
+{
+    _error = [error copy];
+    [self changed];
 }
 
 #pragma mark State
@@ -258,59 +453,267 @@ static NSString *StringFrom(NSArray *arguments)
 
 - (NSUInteger)frames
 {
-    return _recorder.framesWritten;
+    return self.places.firstObject.frames;
 }
 
 - (NSUInteger)dropped
 {
-    return _recorder.framesDropped;
+    NSUInteger dropped = 0;
+    for (RecorderPlace *place in self.places)
+    {
+        dropped += place.dropped;
+    }
+    return dropped;
 }
 
-- (NSInteger)sourceWidth
+- (NSString *)file
 {
-    os_unfair_lock_lock(&_lock);
-    NSInteger width = _frameWidth;
-    os_unfair_lock_unlock(&_lock);
-    return width;
-}
-
-- (NSInteger)sourceHeight
-{
-    os_unfair_lock_lock(&_lock);
-    NSInteger height = _frameHeight;
-    os_unfair_lock_unlock(&_lock);
-    return height;
-}
-
-- (double)sourceFPS
-{
-    return _sourceFPS;
+    return self.places.firstObject.file ?: @"";
 }
 
 // Tells observers about the values which change by themselves
 - (void)refresh
 {
-    NSArray<NSString *> *keys = @[@"elapsed", @"frames", @"dropped", @"sourceWidth", @"sourceHeight", @"sourceFPS"];
+    NSArray<NSString *> *keys = @[@"elapsed", @"frames", @"dropped", @"file"];
     for (NSString *key in keys)
     {
         [self willChangeValueForKey:key];
     }
-    os_unfair_lock_lock(&_lock);
-    NSUInteger frameCount = _frameCount;
-    os_unfair_lock_unlock(&_lock);
     NSTimeInterval now = CACurrentMediaTime();
-    if (_measuredTime > 0.0 && now > _measuredTime)
+    for (RecorderPlace *place in self.places)
     {
-        double measured = (frameCount - _measuredFrameCount) / (now - _measuredTime);
-        // Smoothed, as few frames arrive between two refreshes
-        _sourceFPS = (_sourceFPS == 0.0 || measured == 0.0) ? measured : 0.5 * _sourceFPS + 0.5 * measured;
+        [place measureAtTime:now];
     }
-    _measuredFrameCount = frameCount;
-    _measuredTime = now;
     for (NSString *key in keys.reverseObjectEnumerator)
     {
         [self didChangeValueForKey:key];
     }
+    [self changed];
+}
+
+#pragma mark Places
+
+// Connects the places whose source is there, and lets go of those whose source has gone
+- (void)connectPlaces
+{
+    NSMutableSet<NSString *> *available = [NSMutableSet set];
+    for (SourceDescription *source in self.availableSources)
+    {
+        [available addObject:source.title];
+    }
+    for (RecorderPlace *place in self.places)
+    {
+        BOOL there = [available containsObject:place.title];
+        if (place.source && !there)
+        {
+            [place.source stop];
+            place.source = nil;
+        }
+        else if (place.source == nil && there)
+        {
+            [self connectPlace:place];
+        }
+    }
+}
+
+- (void)connectPlace:(RecorderPlace *)place
+{
+    id<FrameSource> source = [_directory connectToSourceWithTitle:place.title device:_device];
+    if (source == nil)
+    {
+        return;
+    }
+    BOOL flipped = source.flipped;
+    Take *take = _take;
+    __weak RecorderPlace *weakPlace = place;
+    // Called on the source's own thread: the frame goes to the place, which shows it, and to the place's movie if
+    // a take is being recorded
+    source.frameHandler = ^(id<MTLTexture> frame) {
+        RecorderPlace *strongPlace = weakPlace;
+        if (strongPlace == nil)
+        {
+            return;
+        }
+        NSTimeInterval now = CACurrentMediaTime();
+        NSUInteger index = [strongPlace receivedFrame:frame flipped:flipped atTime:now];
+        if (index != NSNotFound)
+        {
+            [take appendTexture:frame flipped:flipped fromSourceAtIndex:index atTime:now];
+        }
+    };
+    place.source = source;
+}
+
+// The places are these from now on: saved, and told
+- (void)usePlaces:(NSArray<RecorderPlace *> *)places
+{
+    for (RecorderPlace *place in self.places)
+    {
+        if (![places containsObject:place])
+        {
+            [place.source stop];
+            place.source = nil;
+        }
+    }
+    self.places = places;
+    [_defaults setObject:[places valueForKey:@"title"] forKey:@"RecorderSources"];
+    [self connectPlaces];
+    [self changed];
+}
+
+- (BOOL)placesCanChange
+{
+    if (![self.state isEqualToString:kStateIdle])
+    {
+        return [self failWithError:@"The sources cannot be changed while recording"];
+    }
+    return YES;
+}
+
+// The title of the source meant: this title or, failing that, the first which contains it, whatever the case
+- (NSString *)titleMatching:(NSString *)title
+{
+    if (title.length == 0)
+    {
+        [self failWithError:@"/source expects the title of a source"];
+        return nil;
+    }
+    NSArray<NSString *> *titles = [self.availableSources valueForKey:@"title"];
+    NSUInteger index = [titles indexOfObject:title];
+    if (index == NSNotFound)
+    {
+        index = [titles indexOfObjectPassingTest:^BOOL(NSString *candidate, NSUInteger idx, BOOL *stop) {
+            return [candidate rangeOfString:title options:NSCaseInsensitiveSearch].location != NSNotFound;
+        }];
+    }
+    if (index == NSNotFound)
+    {
+        [self failWithError:[NSString stringWithFormat:@"There is no source called “%@”", title]];
+        return nil;
+    }
+    return titles[index];
+}
+
+- (NSUInteger)indexOfPlaceWithTitle:(NSString *)title
+{
+    return [self.places indexOfObjectPassingTest:^BOOL(RecorderPlace *place, NSUInteger idx, BOOL *stop) {
+        return [place.title isEqualToString:title];
+    }];
+}
+
+- (BOOL)addSourceMatching:(NSString *)title
+{
+    if (![self placesCanChange])
+    {
+        return NO;
+    }
+    NSString *found = [self titleMatching:title];
+    if (found == nil)
+    {
+        return NO;
+    }
+    if ([self indexOfPlaceWithTitle:found] != NSNotFound)
+    {
+        return YES;
+    }
+    if (self.places.count >= RecorderMaximumPlaces)
+    {
+        return [self failWithError:[NSString stringWithFormat:@"No more than %lu sources can be recorded at once", (unsigned long)RecorderMaximumPlaces]];
+    }
+    [self usePlaces:[self.places arrayByAddingObject:[[RecorderPlace alloc] initWithTitle:found]]];
+    return YES;
+}
+
+- (BOOL)setSourceMatching:(NSString *)title atPlace:(NSUInteger)place
+{
+    if (![self placesCanChange])
+    {
+        return NO;
+    }
+    if (place < 1 || place > RecorderMaximumPlaces)
+    {
+        return [self failWithError:[NSString stringWithFormat:@"There are places 1 to %lu", (unsigned long)RecorderMaximumPlaces]];
+    }
+    if (title.length == 0)
+    {
+        [self removeSourceAtPlace:place];
+        return YES;
+    }
+    NSString *found = [self titleMatching:title];
+    if (found == nil)
+    {
+        return NO;
+    }
+
+    NSMutableArray<RecorderPlace *> *places = [self.places mutableCopy];
+    NSUInteger index = place - 1;
+    NSUInteger current = [self indexOfPlaceWithTitle:found];
+    if (current != NSNotFound)
+    {
+        // Chosen already: it moves, with its connection
+        RecorderPlace *moving = places[current];
+        [places removeObjectAtIndex:current];
+        [places insertObject:moving atIndex:MIN(index, places.count)];
+    }
+    else if (index < places.count)
+    {
+        places[index] = [[RecorderPlace alloc] initWithTitle:found];
+    }
+    else
+    {
+        [places addObject:[[RecorderPlace alloc] initWithTitle:found]];
+    }
+    [self usePlaces:places];
+    return YES;
+}
+
+- (void)removeSourceAtPlace:(NSUInteger)place
+{
+    if (![self placesCanChange] || place < 1 || place > self.places.count)
+    {
+        return;
+    }
+    NSMutableArray<RecorderPlace *> *places = [self.places mutableCopy];
+    [places removeObjectAtIndex:place - 1];
+    [self usePlaces:places];
+}
+
+- (BOOL)moveSourceFromPlace:(NSUInteger)from toPlace:(NSUInteger)to
+{
+    if (![self placesCanChange])
+    {
+        return NO;
+    }
+    if (from < 1 || from > self.places.count || to < 1)
+    {
+        return [self failWithError:@"There is no source in that place"];
+    }
+    NSMutableArray<RecorderPlace *> *places = [self.places mutableCopy];
+    RecorderPlace *moving = places[from - 1];
+    [places removeObjectAtIndex:from - 1];
+    [places insertObject:moving atIndex:MIN(to - 1, places.count)];
+    [self usePlaces:places];
+    return YES;
+}
+
+// The directory's sources have changed
+- (void)sourcesDidChange
+{
+    self.availableSources = [_directory availableSources];
+    // A source which has gone keeps its place, and is connected to again when it is back
+    [self connectPlaces];
+    if (_queryServerStarted)
+    {
+        // The sources available are the values a place can take
+        for (RecorderParameter *parameter in _parameters)
+        {
+            if ([parameter.address hasPrefix:@"/source"])
+            {
+                [self registerParameter:parameter];
+            }
+        }
+    }
+    [self changed];
 }
 
 #pragma mark Recording
@@ -325,14 +728,14 @@ static NSString *StringFrom(NSArray *arguments)
 {
     if (![self.state isEqualToString:kStateIdle])
     {
-        // Already recording: there is nothing to do. Finishing: the file must be finished first.
+        // Already recording: there is nothing to do. Finishing: the movies must be finished first.
         return [self.state isEqualToString:kStateRecording] ? YES : [self failWithError:@"The previous recording is still being finished"];
     }
     self.error = @"";
     self.recordingError = @"";
 
-    id<RecorderSourceProvider> provider = _provider;
-    if ([provider selectedSourceTitle] == nil)
+    NSArray<RecorderPlace *> *places = self.places;
+    if (places.count == 0)
     {
         return [self failWithError:@"No source is selected"];
     }
@@ -341,61 +744,53 @@ static NSString *StringFrom(NSArray *arguments)
     MovieCodec codec = MovieCodecH264;
     [MovieRecorderSettings getCodec:&codec forName:self.codec];
     settings.codec = codec;
-    settings.width = self.width;
-    settings.height = self.height;
-    if (settings.width == 0 || settings.height == 0)
-    {
-        // The size of the source: tell the recorder now if we know it, so that it is ready for the first frame.
-        // Otherwise it takes the size of the first frame it is given.
-        settings.width = self.sourceWidth;
-        settings.height = self.sourceHeight;
-    }
     settings.framesPerSecond = self.fps;
     settings.megabitsPerSecond = self.bitrate;
 
-    NSURL *url = [self newFileURLForSourceApplication:[provider selectedSourceApplicationName]];
-    NSError *error = nil;
-    if (![_recorder startWritingToURL:url settings:settings error:&error])
+    // The size of each source if we know it, so that its movie is ready for its first frame
+    NSMutableArray *sizes = [NSMutableArray array];
+    for (RecorderPlace *place in places)
     {
-        return [self failWithError:error.localizedDescription];
+        BOOL known = place.width > 0 && place.height > 0;
+        [sizes addObject:known ? [NSValue valueWithSize:NSMakeSize(place.width, place.height)] : [NSNull null]];
     }
 
-    _startTime = CACurrentMediaTime();
-    // Not to be slowed down or put to sleep while we record
-    _activity = [[NSProcessInfo processInfo] beginActivityWithOptions:NSActivityUserInitiated | NSActivityLatencyCritical
-                                                               reason:@"Recording"];
-    self.file = url.path;
-    self.state = kStateRecording;
-    [self refresh];
-    return YES;
-}
-
-// A file which does not exist yet, in the folder, called after the name chosen or the source and the date
-- (NSURL *)newFileURLForSourceApplication:(NSString *)application
-{
     NSString *name = self.name;
     if (name.length == 0)
     {
         NSDateFormatter *formatter = [[NSDateFormatter alloc] init];
         formatter.locale = [NSLocale localeWithLocaleIdentifier:@"en_US_POSIX"];
         formatter.dateFormat = @"yyyy-MM-dd HH.mm.ss";
-        name = [NSString stringWithFormat:@"%@ %@", application.length > 0 ? application : @"Syphon", [formatter stringFromDate:[NSDate date]]];
-    }
-    // The name is a file's, not a path: it cannot lead out of the folder
-    name = [[name componentsSeparatedByCharactersInSet:[NSCharacterSet characterSetWithCharactersInString:@"/:"]] componentsJoinedByString:@"-"];
-    if ([name hasPrefix:@"."])
-    {
-        name = [@"-" stringByAppendingString:[name substringFromIndex:1]];
+        name = [NSString stringWithFormat:@"Simple Recorder %@", [formatter stringFromDate:[NSDate date]]];
     }
 
-    NSURL *folder = [NSURL fileURLWithPath:self.folder isDirectory:YES];
-    NSURL *url = [folder URLByAppendingPathComponent:[name stringByAppendingPathExtension:@"mov"]];
-    for (NSInteger copy = 2; [[NSFileManager defaultManager] fileExistsAtPath:url.path]; copy++)
+    NSTimeInterval now = CACurrentMediaTime();
+    NSError *error = nil;
+    if (![_take startWithSourceTitles:[places valueForKey:@"title"]
+                                sizes:sizes
+                                 name:name
+                               folder:[NSURL fileURLWithPath:self.folder isDirectory:YES]
+                             settings:settings
+                               atTime:now
+                                error:&error])
     {
-        NSString *numbered = [NSString stringWithFormat:@"%@ %ld", name, (long)copy];
-        url = [folder URLByAppendingPathComponent:[numbered stringByAppendingPathExtension:@"mov"]];
+        return [self failWithError:error.localizedDescription ?: @"The recording could not start"];
     }
-    return url;
+
+    NSArray<TakeMovie *> *movies = _take.movies;
+    [places enumerateObjectsUsingBlock:^(RecorderPlace *place, NSUInteger index, BOOL *stop) {
+        place.movie = movies[index];
+        place.inTake = YES;
+        [place setTakeIndex:index];
+    }];
+
+    _startTime = now;
+    // Not to be slowed down or put to sleep while we record
+    _activity = [[NSProcessInfo processInfo] beginActivityWithOptions:NSActivityUserInitiated | NSActivityLatencyCritical
+                                                               reason:@"Recording"];
+    self.state = kStateRecording;
+    [self refresh];
+    return YES;
 }
 
 - (void)stopWithCompletionHandler:(void (^)(void))handler
@@ -419,32 +814,54 @@ static NSString *StringFrom(NSArray *arguments)
 
     NSTimeInterval now = CACurrentMediaTime();
     _lastElapsed = now - _startTime;
+    for (RecorderPlace *place in self.places)
+    {
+        [place setTakeIndex:NSNotFound];
+    }
     self.state = kStateFinishing;
+    [self changed];
     __weak RecorderController *weakSelf = self;
-    [_recorder finishAtTime:now completionHandler:^(NSError *error) {
+    [_take finishAtTime:now completionHandler:^(NSError *error) {
         [weakSelf recordingEndedWithError:error];
     }];
 }
 
-// The file is finished, or writing failed
+// One movie has failed (a full disk, for instance): the others go on, unless none is left
+- (void)movieAtIndex:(NSUInteger)index failedWithError:(NSError *)error
+{
+    NSArray<TakeMovie *> *movies = _take.movies;
+    NSString *title = index < movies.count ? movies[index].sourceTitle : @"";
+    NSString *message = movies.count > 1 ? [NSString stringWithFormat:@"%@: %@", title, error.localizedDescription] : error.localizedDescription;
+    self.error = message;
+    self.recordingError = message;
+
+    BOOL someGoOn = NO;
+    for (TakeMovie *movie in movies)
+    {
+        someGoOn = someGoOn || movie.error == nil;
+    }
+    if (!someGoOn)
+    {
+        [self stopWithCompletionHandler:nil];
+    }
+}
+
+// The movies are finished
 - (void)recordingEndedWithError:(NSError *)error
 {
     if ([self.state isEqualToString:kStateIdle])
     {
         return;
     }
-    if ([self.state isEqualToString:kStateRecording])
+    for (RecorderPlace *place in self.places)
     {
-        _lastElapsed = CACurrentMediaTime() - _startTime;
+        place.inTake = NO;
     }
-    if (error)
+    // A movie which failed has said why already
+    if (error && self.recordingError.length == 0)
     {
         self.error = error.localizedDescription;
         self.recordingError = error.localizedDescription;
-        if (![[NSFileManager defaultManager] fileExistsAtPath:self.file])
-        {
-            self.file = @"";
-        }
     }
     if (_activity)
     {
@@ -474,81 +891,6 @@ static NSString *StringFrom(NSArray *arguments)
     }
 }
 
-#pragma mark Sources
-
-- (BOOL)selectSourceMatching:(NSString *)title
-{
-    id<RecorderSourceProvider> provider = _provider;
-    if (title.length == 0)
-    {
-        return [self failWithError:@"/source expects the title of a source"];
-    }
-    NSArray<NSString *> *titles = [provider sourceTitles];
-    NSUInteger index = [titles indexOfObject:title];
-    if (index == NSNotFound)
-    {
-        index = [titles indexOfObjectPassingTest:^BOOL(NSString *candidate, NSUInteger idx, BOOL *stop) {
-            return [candidate rangeOfString:title options:NSCaseInsensitiveSearch].location != NSNotFound;
-        }];
-    }
-    if (index == NSNotFound)
-    {
-        return [self failWithError:[NSString stringWithFormat:@"There is no source called \u201C%@\u201D", title]];
-    }
-    _chosenSourceTitle = [titles[index] copy];
-    [provider selectSourceAtIndex:index];
-    return YES;
-}
-
-- (void)sourcesDidChange
-{
-    // If the source which was chosen went away (its application quit, or crashed) and is back, return to it:
-    // a recording must not carry on with whichever source took its place
-    id<RecorderSourceProvider> provider = _provider;
-    if (_chosenSourceTitle && ![_chosenSourceTitle isEqualToString:[provider selectedSourceTitle]])
-    {
-        NSUInteger index = [[provider sourceTitles] indexOfObject:_chosenSourceTitle];
-        if (index != NSNotFound)
-        {
-            [provider selectSourceAtIndex:index];
-        }
-    }
-
-    // The sources available are the values /source can take
-    if (_queryServerStarted)
-    {
-        [self registerParameter:_parametersByAddress[@"/source"]];
-    }
-}
-
-- (void)sourceSelectionDidChange:(BOOL)chosen
-{
-    if (chosen || _chosenSourceTitle == nil)
-    {
-        _chosenSourceTitle = [[_provider selectedSourceTitle] copy];
-    }
-
-    os_unfair_lock_lock(&_lock);
-    _frameWidth = 0;
-    _frameHeight = 0;
-    os_unfair_lock_unlock(&_lock);
-    _sourceFPS = 0.0;
-    [self refresh];
-}
-
-- (void)frameReceived:(id<MTLTexture>)frame
-{
-    os_unfair_lock_lock(&_lock);
-    _frameWidth = frame.width;
-    _frameHeight = frame.height;
-    _frameCount++;
-    os_unfair_lock_unlock(&_lock);
-
-    // Frames from Syphon have their first row at the bottom of the picture. The recorder ignores them unless
-    // it is recording.
-    [_recorder appendTexture:frame flipped:YES atTime:CACurrentMediaTime()];
-}
-
 #pragma mark Parameters
 
 - (RecorderParameter *)parameter:(NSString *)address type:(NSString *)typeSpec summary:(NSString *)summary
@@ -560,7 +902,7 @@ static NSString *StringFrom(NSArray *arguments)
     return parameter;
 }
 
-// A number which is read with one key and set with a block
+// A number which is read with one key and set with it
 - (RecorderParameter *)numberParameter:(NSString *)address
                                   type:(NSString *)typeSpec
                                summary:(NSString *)summary
@@ -608,30 +950,60 @@ static NSString *StringFrom(NSArray *arguments)
     return parameter;
 }
 
-- (void)makeParameters
+// The source in a place (from 1)
+- (RecorderParameter *)placeParameter:(NSString *)address place:(NSUInteger)place summary:(NSString *)summary
 {
     __weak RecorderController *weakSelf = self;
-
-    RecorderParameter *source = [self parameter:@"/source" type:@"s"
-                                        summary:@"The source to record: its title, or part of it"];
-    source.range = ^{
-        // Each title once: of sources with the same title, the first is selected
-        NSArray<NSString *> *titles = [[NSOrderedSet orderedSetWithArray:[weakSelf sourceTitles]] array];
-        return @[@{@"VALS": titles}];
+    RecorderParameter *parameter = [self parameter:address type:@"s" summary:summary];
+    parameter.range = ^{
+        // Each title once: of sources with the same title, the first is chosen
+        NSArray<NSString *> *titles = [weakSelf.availableSources valueForKey:@"title"] ?: @[];
+        return @[@{@"VALS": [[NSOrderedSet orderedSetWithArray:titles] array]}];
     };
-    source.get = ^{ return @[[weakSelf selectedSourceTitle] ?: @""]; };
-    source.set = ^NSString *(NSArray *arguments) {
+    parameter.get = ^{
+        NSArray<RecorderPlace *> *places = weakSelf.places;
+        return @[place <= places.count ? places[place - 1].title : @""];
+    };
+    parameter.set = ^NSString *(NSArray *arguments) {
         NSString *title = StringFrom(arguments);
         if (title == nil)
         {
-            return @"expects the title of a source";
+            return @"expects the title of a source, or an empty string";
         }
-        // -selectSourceMatching: reports its own error
-        [weakSelf selectSourceMatching:title];
+        // It reports its own errors
+        [weakSelf setSourceMatching:title atPlace:place];
         return nil;
     };
+    return parameter;
+}
 
-    RecorderParameter *record = [self parameter:@"/record" type:@"i" summary:@"1 starts recording the source, 0 stops and finishes the file"];
+// Something a place tells (key is a key of RecorderPlace)
+- (RecorderParameter *)placeStatusParameter:(NSString *)name place:(NSUInteger)place type:(NSString *)typeSpec summary:(NSString *)summary key:(NSString *)key
+{
+    __weak RecorderController *weakSelf = self;
+    RecorderParameter *parameter = [self parameter:[NSString stringWithFormat:@"/status/source/%lu/%@", (unsigned long)place, name] type:typeSpec summary:summary];
+    BOOL isString = [typeSpec isEqualToString:@"s"];
+    parameter.get = ^{
+        NSArray<RecorderPlace *> *places = weakSelf.places;
+        id value = place <= places.count ? [places[place - 1] valueForKey:key] : nil;
+        return @[value ?: (isString ? @"" : @0)];
+    };
+    return parameter;
+}
+
+- (void)makeParameters
+{
+    __weak RecorderController *weakSelf = self;
+    NSMutableArray<RecorderParameter *> *parameters = [NSMutableArray array];
+
+    [parameters addObject:[self placeParameter:@"/source" place:1 summary:@"The first source to record: its title, or part of it. The same as /source/1."]];
+    for (NSUInteger place = 1; place <= RecorderMaximumPlaces; place++)
+    {
+        NSString *summary = [NSString stringWithFormat:@"Source %lu to record: its title, or part of it. Empty for none: the sources after it move up.", (unsigned long)place];
+        [parameters addObject:[self placeParameter:[NSString stringWithFormat:@"/source/%lu", (unsigned long)place] place:place summary:summary]];
+    }
+
+    RecorderParameter *record = [self parameter:@"/record" type:@"i" summary:@"1 starts recording the sources, 0 stops and finishes the movies"];
     record.range = ^{ return @[@{@"MIN": @0, @"MAX": @1}]; };
     record.get = ^{ return @[@([weakSelf.state isEqualToString:kStateRecording] ? 1 : 0)]; };
     record.set = ^NSString *(NSArray *arguments) {
@@ -650,14 +1022,16 @@ static NSString *StringFrom(NSArray *arguments)
         }
         return nil;
     };
+    [parameters addObject:record];
 
     RecorderParameter *toggle = [self parameter:@"/record/toggle" type:nil summary:@"Starts recording, or stops"];
     toggle.set = ^NSString *(NSArray *arguments) {
         [weakSelf toggle];
         return nil;
     };
+    [parameters addObject:toggle];
 
-    RecorderParameter *codec = [self parameter:@"/codec" type:@"s" summary:@"The codec of the movie. prores4444 keeps transparency."];
+    RecorderParameter *codec = [self parameter:@"/codec" type:@"s" summary:@"The codec of the movies. prores4444 keeps transparency."];
     codec.range = ^{ return @[@{@"VALS": [MovieRecorderSettings codecNames]}]; };
     codec.get = ^{ return @[weakSelf.codec ?: @""]; };
     codec.set = ^NSString *(NSArray *arguments) {
@@ -665,42 +1039,50 @@ static NSString *StringFrom(NSArray *arguments)
         MovieCodec value;
         if (name == nil || ![MovieRecorderSettings getCodec:&value forName:name])
         {
-            return [NSString stringWithFormat:@"\u201C%@\u201D is not one of %@", arguments.firstObject ?: @"",
+            return [NSString stringWithFormat:@"“%@” is not one of %@", arguments.firstObject ?: @"",
                     [[MovieRecorderSettings codecNames] componentsJoinedByString:@", "]];
         }
         weakSelf.codec = name;
         return nil;
     };
+    [parameters addObject:codec];
 
-    _parameters = @[
-        source,
-        record,
-        toggle,
-        codec,
-        [self numberParameter:@"/width" type:@"i" summary:@"Width of the movie in pixels. 0 with /height 0 for the size of the source."
+    [parameters addObjectsFromArray:@[
+        [self numberParameter:@"/width" type:@"i" summary:@"Width of the assembled movie in pixels, 0 for automatic. A source's own movie is the size of the source."
                           key:@"width" maximum:kMaximumDimension],
-        [self numberParameter:@"/height" type:@"i" summary:@"Height of the movie in pixels. 0 with /width 0 for the size of the source."
+        [self numberParameter:@"/height" type:@"i" summary:@"Height of the assembled movie in pixels, 0 for automatic. A source's own movie is the size of the source."
                           key:@"height" maximum:kMaximumDimension],
-        [self numberParameter:@"/fps" type:@"f" summary:@"The most frames the movie has each second. 0 keeps every frame of the source."
+        [self numberParameter:@"/fps" type:@"f" summary:@"The most frames the movies have each second. 0 keeps every frame of the sources."
                           key:@"fps" maximum:kMaximumFramesPerSecond],
         [self numberParameter:@"/bitrate" type:@"f" summary:@"Megabits per second for h264 and hevc. 0 chooses from the size and frame rate."
                           key:@"bitrate" maximum:kMaximumMegabitsPerSecond],
         [self stringParameter:@"/folder" summary:@"The folder movies are written to" key:@"folder"],
-        [self stringParameter:@"/name" summary:@"The name of the movie, without extension. Empty for the source's application and the date."
+        [self stringParameter:@"/name" summary:@"The name of the recording, without extension. Empty for the app's name and the date. With several sources, each movie adds its source's title."
                           key:@"name"],
-        [self statusParameter:@"/status/state" type:@"s" summary:@"idle, recording, or finishing while the file is completed" key:@"state"],
+        [self statusParameter:@"/status/state" type:@"s" summary:@"idle, recording, or finishing while the movies are completed" key:@"state"],
         [self statusParameter:@"/status/elapsed" type:@"f" summary:@"Seconds recorded" key:@"elapsed"],
-        [self statusParameter:@"/status/frames" type:@"i" summary:@"Frames written to the movie" key:@"frames"],
-        [self statusParameter:@"/status/dropped" type:@"i" summary:@"Frames lost because the encoder could not keep up" key:@"dropped"],
-        [self statusParameter:@"/status/file" type:@"s" summary:@"The movie being written, or the last one written" key:@"file"],
+        [self statusParameter:@"/status/frames" type:@"i" summary:@"Frames written to the first source's movie" key:@"frames"],
+        [self statusParameter:@"/status/dropped" type:@"i" summary:@"Frames lost in all the movies because the encoder could not keep up" key:@"dropped"],
+        [self statusParameter:@"/status/file" type:@"s" summary:@"The first source's movie, being written or last written" key:@"file"],
         [self statusParameter:@"/status/error" type:@"s" summary:@"The last error. Empty when a recording starts." key:@"error"],
         [self statusParameter:@"/status/failure" type:@"s" summary:@"Why the last recording ended, if it failed or had nothing to write. Empty otherwise."
-                          key:@"recordingError"],
-        [self statusParameter:@"/status/source/width" type:@"i" summary:@"Width of the source's frames" key:@"sourceWidth"],
-        [self statusParameter:@"/status/source/height" type:@"i" summary:@"Height of the source's frames" key:@"sourceHeight"],
-        [self statusParameter:@"/status/source/fps" type:@"f" summary:@"Frames the source delivers each second" key:@"sourceFPS"]
-    ];
+                          key:@"recordingError"]
+    ]];
 
+    for (NSUInteger place = 1; place <= RecorderMaximumPlaces; place++)
+    {
+        [parameters addObjectsFromArray:@[
+            [self placeStatusParameter:@"online" place:place type:@"i" summary:@"1 if the source is delivering frames" key:@"online"],
+            [self placeStatusParameter:@"width" place:place type:@"i" summary:@"Width of the source's frames" key:@"width"],
+            [self placeStatusParameter:@"height" place:place type:@"i" summary:@"Height of the source's frames" key:@"height"],
+            [self placeStatusParameter:@"fps" place:place type:@"f" summary:@"Frames the source delivers each second" key:@"fps"],
+            [self placeStatusParameter:@"file" place:place type:@"s" summary:@"The source's movie, being written or last written" key:@"file"],
+            [self placeStatusParameter:@"frames" place:place type:@"i" summary:@"Frames written to the source's movie" key:@"frames"],
+            [self placeStatusParameter:@"dropped" place:place type:@"i" summary:@"Frames of the source lost because the encoder could not keep up" key:@"dropped"]
+        ]];
+    }
+
+    _parameters = parameters;
     NSMutableDictionary *byAddress = [NSMutableDictionary dictionary];
     for (RecorderParameter *parameter in _parameters)
     {
@@ -709,23 +1091,13 @@ static NSString *StringFrom(NSArray *arguments)
     _parametersByAddress = byAddress;
 }
 
-- (NSArray<NSString *> *)sourceTitles
-{
-    return [_provider sourceTitles] ?: @[];
-}
-
-- (NSString *)selectedSourceTitle
-{
-    return [_provider selectedSourceTitle];
-}
-
 - (void)handleMessage:(OSCMessage *)message
 {
     RecorderParameter *parameter = _parametersByAddress[message.address];
     if (parameter == nil)
     {
         // Said rather than ignored: an address which is not quite right is the usual reason "nothing happens"
-        self.error = [NSString stringWithFormat:@"There is no OSC address \u201C%@\u201D", message.address];
+        self.error = [NSString stringWithFormat:@"There is no OSC address “%@”", message.address];
         return;
     }
     if (parameter.set == nil)
@@ -782,6 +1154,7 @@ static NSString *StringFrom(NSArray *arguments)
     }
     _queryServerStarted = YES;
     self.oscQueryPort = server.httpPort;
+    [self changed];
     return YES;
 }
 

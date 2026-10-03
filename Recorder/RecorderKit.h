@@ -35,4 +35,5 @@
 #import "OSCQueryServer.h"
 #import "MovieRecorder.h"
 #import "Take.h"
+#import "FrameSource.h"
 #import "RecorderController.h"
