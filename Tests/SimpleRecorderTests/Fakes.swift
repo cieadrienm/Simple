@@ -13,7 +13,12 @@ final class FakeSource: NSObject, FrameSource {
     weak var directory: FakeDirectory?
 
     init(title: String) { self.title = title }
-    var isAlive: Bool { !(directory?.dead.contains(entry) ?? false) }
+    /// How many times it was asked whether it is alive
+    private(set) var aliveChecks = 0
+    var isAlive: Bool {
+        aliveChecks += 1
+        return !(directory?.dead.contains(entry) ?? false)
+    }
     func stop() { stopped = true }
     func deliver(_ texture: MTLTexture) { frameHandler?(texture) }
 }

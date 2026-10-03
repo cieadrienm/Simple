@@ -14,7 +14,12 @@ final class FakeSource: NSObject, FrameSource {
     weak var directory: FakeDirectory?
 
     init(title: String) { self.title = title }
-    var isAlive: Bool { !(directory?.dead.contains(entry) ?? false) }
+    /// How many times it was asked whether it is alive
+    private(set) var aliveChecks = 0
+    var isAlive: Bool {
+        aliveChecks += 1
+        return !(directory?.dead.contains(entry) ?? false)
+    }
     func stop() { stopped = true }
     func deliver(_ texture: MTLTexture) { frameHandler?(texture) }
 }
@@ -287,6 +292,13 @@ final class RecorderControllerTests: XCTestCase {
         RunLoop.main.run(until: Date().addingTimeInterval(4.6))
         XCTAssertFalse(source.stopped, "it is alive: silence is not a reason to leave it")
         XCTAssertEqual(directory.connections.count, 1, "nor to connect to it again")
+        // Asking makes a client in the source's application: after 2 s, then 4 s later, then 8… not every 2 s
+        XCTAssertEqual(source.aliveChecks, 1, "a still scene must not be asked again and again")
+
+        let texture = makeTexture()
+        source.deliver(texture)
+        RunLoop.main.run(until: Date().addingTimeInterval(2.6))
+        XCTAssertEqual(source.aliveChecks, 2, "it spoke: the next silence is counted from the start")
     }
 
     func testAPlaceWaitingForItsSourceCanBeGivenItAgain() {

@@ -52,6 +52,9 @@ static const NSTimeInterval kOnlineTimeout = 1.0;
 // A source which has delivered no frame for this long is asked whether it is alive, and a place without its
 // source tries for it again this often
 static const NSTimeInterval kSilenceTimeout = 2.0;
+// Asking a source whether it is alive makes a client in its application: one which stays silent (a picture which
+// does not move) is asked after twice as long each time, up to this
+static const NSTimeInterval kLongestSilenceTimeout = 30.0;
 
 #pragma mark - SourceDescription
 
@@ -82,6 +85,8 @@ static const NSTimeInterval kSilenceTimeout = 2.0;
 @property (assign) BOOL inTake;
 // Main thread: when the place last connected, tried to, or asked its source whether it is alive
 @property (assign) NSTimeInterval checkTime;
+// Main thread: how many times in a row its source was found alive and silent
+@property (assign) NSUInteger silentChecks;
 @end
 
 @implementation RecorderPlace {
@@ -501,7 +506,14 @@ static NSString *StringFrom(NSArray *arguments)
     for (RecorderPlace *place in self.places)
     {
         [place measureAtTime:now];
-        if (now - MAX(place.checkTime, [place lastFrameTime]) <= kSilenceTimeout)
+        NSTimeInterval lastFrameTime = [place lastFrameTime];
+        if (lastFrameTime > place.checkTime)
+        {
+            // It has spoken since we last asked
+            place.silentChecks = 0;
+        }
+        NSTimeInterval patience = MIN(kSilenceTimeout * (1 << MIN(place.silentChecks, 8)), kLongestSilenceTimeout);
+        if (now - MAX(place.checkTime, lastFrameTime) <= (place.source ? patience : kSilenceTimeout))
         {
             continue;
         }
@@ -522,6 +534,7 @@ static NSString *StringFrom(NSArray *arguments)
         else
         {
             place.checkTime = now;
+            place.silentChecks++;
         }
     }
     for (NSString *key in keys.reverseObjectEnumerator)
