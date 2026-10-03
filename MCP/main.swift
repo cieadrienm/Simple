@@ -1,10 +1,10 @@
-// simple-recorder-mcp — Model Context Protocol server (stdio) for Simple Client's recorder.
+// simple-recorder-mcp — Model Context Protocol server (stdio) for Simple Recorder.
 //
 // It reads the recorder through OSCQuery (HTTP) and writes to it with OSC (UDP), so it uses the very surface any
 // OSC controller does: there is no other API.
 import Foundation
 
-let applicationName = "Simple Client"
+let applicationName = "Simple Recorder"
 let preferredPort = Int(ProcessInfo.processInfo.environment["SIMPLE_OSCQUERY_PORT"] ?? "") ?? 9231
 /// The app takes the first free port from the one it prefers, so it may be a few ports further
 let portsToTry = 16
@@ -78,21 +78,28 @@ struct Recorder {
         return (values, sources)
     }
 
+    /// The most sources which can be recorded at once: /source/1 … /source/8
+    static let maximumPlaces = 8
+
     /// The recorder as the tools report it.
     func status() throws -> [String: Any] {
         let (values, sources) = try read()
         func value(_ path: String) -> Any { values[path] ?? NSNull() }
+        var places: [[String: Any]] = []
+        for place in 1...Self.maximumPlaces {
+            guard let title = values["/source/\(place)"] as? String, !title.isEmpty else { continue }
+            let status = "/status/source/\(place)/"
+            places.append(["place": place, "title": title, "online": (value(status + "online") as? NSNumber)?.boolValue ?? false,
+                           "width": value(status + "width"), "height": value(status + "height"), "fps": value(status + "fps"),
+                           "file": value(status + "file"), "frames": value(status + "frames"), "dropped": value(status + "dropped")])
+        }
         return [
-            "source": value("/source"),
+            "sources": places,
             "sourcesAvailable": sources,
-            "sourceFrames": ["width": value("/status/source/width"), "height": value("/status/source/height"), "fps": value("/status/source/fps")],
-            "settings": ["codec": value("/codec"), "width": value("/width"), "height": value("/height"), "fps": value("/fps"),
-                         "bitrate": value("/bitrate"), "folder": value("/folder"), "name": value("/name")],
+            "settings": ["codec": value("/codec"), "fps": value("/fps"), "bitrate": value("/bitrate"), "folder": value("/folder"), "name": value("/name")],
             "state": value("/status/state"),
             "elapsed": value("/status/elapsed"),
-            "frames": value("/status/frames"),
             "dropped": value("/status/dropped"),
-            "file": value("/status/file"),
             "error": value("/status/error"),
             "failure": value("/status/failure"),
         ]
@@ -177,16 +184,28 @@ struct Recorder {
             guard let string = value as? String else { throw RecorderError.badArguments("\(key) must be a string") }
             return string
         }
-        if let source = try string("source") {
-            wanted.append(("/source", .string(source), { ($0 as? String)?.range(of: source, options: .caseInsensitive) != nil }))
+        // sources replaces the sources chosen, in order; source is the first one alone
+        var titles: [String]?
+        if let list = arguments["sources"] {
+            guard let list = list as? [String] else { throw RecorderError.badArguments("sources must be a list of titles") }
+            guard list.count <= Self.maximumPlaces else { throw RecorderError.badArguments("no more than \(Self.maximumPlaces) sources can be recorded at once") }
+            titles = list
+        } else if let source = try string("source") {
+            titles = [source]
+        }
+        if let titles {
+            // Emptying the first place moves the others up: eight times empties them all
+            for _ in 1...Self.maximumPlaces { send("/source/1", [.string("")]) }
+            for (index, title) in titles.enumerated() {
+                let address = "/source/\(index + 1)"
+                wanted.append((address, .string(title), { ($0 as? String)?.range(of: title, options: .caseInsensitive) != nil }))
+            }
+            if titles.count < Self.maximumPlaces {
+                wanted.append(("/source/\(titles.count + 1)", .string(""), { ($0 as? String) == "" }))
+            }
         }
         if let codec = try string("codec") {
             wanted.append(("/codec", .string(codec), { ($0 as? String) == codec.lowercased() }))
-        }
-        for key in ["width", "height"] {
-            if let value = try number(key) {
-                wanted.append(("/" + key, .int(Int32(clamping: Int(value))), { ($0 as? NSNumber)?.intValue == Int(value) }))
-            }
         }
         for key in ["fps", "bitrate"] {
             if let value = try number(key) {
@@ -284,35 +303,35 @@ func schema(_ properties: [String: Any]) -> [String: Any] {
 }
 
 let settingsProperties: [String: Any] = [
-    "source": ["type": "string", "description": "Title of the Syphon source, or part of it (see sourcesAvailable in recorder_status)"],
-    "codec": ["type": "string", "enum": ["h264", "hevc", "prores422", "prores4444"], "description": "prores4444 keeps transparency"],
-    "width": ["type": "integer", "description": "Pixels. 0 with height 0: the size of the source. Other sizes scale the picture to fit, with bars."],
-    "height": ["type": "integer"],
+    "sources": ["type": "array", "items": ["type": "string"], "description": "The sources to record, in order: their titles, or part of them (see sourcesAvailable in recorder_status). Up to 8. Replaces those chosen."],
+    "source": ["type": "string", "description": "One source to record, alone: the same as sources with one title"],
+    "codec": ["type": "string", "enum": ["h264", "hevc", "prores422", "prores4444"], "description": "The same for every movie. prores4444 keeps transparency"],
     "fps": ["type": "number", "description": "The most frames per second in the movie. 0: every frame of the source."],
     "bitrate": ["type": "number", "description": "Megabits per second, for h264 and hevc. 0: chosen from the size and frame rate."],
     "folder": ["type": "string", "description": "Folder the movies are written to. It must exist."],
-    "name": ["type": "string", "description": "Name of the movie, without extension. Empty: the source's application and the date. An existing file is never overwritten: a number is added."],
+    "name": ["type": "string", "description": "Name of the recording, without extension. Empty: the app's name and the date. With several sources each movie adds its source's title. An existing file is never overwritten: a number is added."],
 ]
 
 let tools: [[String: Any]] = [
     ["name": "recorder_status",
-     "description": "The state of Simple Client's recorder: the Syphon sources available and the one selected, the size and frame rate of its frames, "
-        + "the settings, and whether it is recording (state: idle | recording | finishing), for how long, how many frames were written and dropped, "
-        + "the movie being written or last written, the last error (error: a refused message, a recording which could not start), "
+     "description": "The state of Simple Recorder: the sources chosen for recording, in order, with what each delivers (online, size, frame rate) and its movie "
+        + "(file, frames written and dropped); the sources which can be chosen (sourcesAvailable); the settings; whether it is recording "
+        + "(state: idle | recording | finishing) and for how long; the last error (error: a refused message, a recording which could not start), "
         + "and why the last recording ended if it failed (failure).",
      "inputSchema": schema([:])],
     ["name": "recorder_configure",
-     "description": "Changes the recorder's settings; only those given change. They are saved by the app and apply to the next recording, "
-        + "not to one in progress — except source, which switches at once what is shown and recorded. Returns the status afterwards.",
+     "description": "Changes the sources chosen and the settings; only what is given changes. Settings are saved by the app and apply to the next recording. "
+        + "The sources cannot be changed while recording. Each source is recorded to its own movie, at its own size, all on one clock. "
+        + "Returns the status afterwards.",
      "inputSchema": schema(settingsProperties)],
     ["name": "recorder_start",
-     "description": "Starts recording the selected source to a new movie (.mov). Settings can be given as for recorder_configure. "
-        + "Returns once the recording has started, with the path of the movie in file; fails with the reason if it could not start "
-        + "(no source selected, folder missing…).",
+     "description": "Starts recording the sources chosen, one movie (.mov) each. Sources and settings can be given as for recorder_configure. "
+        + "Returns once the recording has started, with the path of each movie in sources[].file; fails with the reason if it could not start "
+        + "(no source chosen, folder missing…).",
      "inputSchema": schema(settingsProperties)],
     ["name": "recorder_stop",
-     "description": "Stops the recording and waits for the movie to be finished. Returns the status, with the movie's path in file, "
-        + "its duration in elapsed and the frames written and dropped.",
+     "description": "Stops the recording and waits for the movies to be finished. Returns the status: each movie's path, frames written and dropped "
+        + "in sources[], the duration in elapsed. A source which delivered no frame has no movie.",
      "inputSchema": schema([:])],
 ]
 
@@ -349,8 +368,8 @@ while let line = readLine(strippingNewline: true) {
         result = ["protocolVersion": params["protocolVersion"] as? String ?? "2024-11-05",
                   "capabilities": ["tools": [:] as [String: Any]],
                   "serverInfo": ["name": "simple-recorder", "version": Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "dev"],
-                  "instructions": "Controls the recorder of the Simple Client app, which records a Syphon source to a movie file. "
-                    + "Call recorder_status first to see the sources and settings; recorder_start and recorder_stop record."]
+                  "instructions": "Controls the Simple Recorder app, which records several Syphon sources at once, each to its own movie file. "
+                    + "Call recorder_status first to see the sources and settings; recorder_configure chooses the sources; recorder_start and recorder_stop record."]
     case "ping": result = [:]
     case "tools/list": result = ["tools": tools]
     case "tools/call":

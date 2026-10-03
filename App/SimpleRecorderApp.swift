@@ -74,6 +74,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     override init() {
         // Without Metal there is nothing to show nor to record
         guard let device = MTLCreateSystemDefaultDevice() else { fatalError("Simple Recorder needs Metal") }
+        // Simple Recorder was Simple Client: its settings are taken over, once
+        SettingsMigration.migrate(from: SettingsMigration.oldDomain, to: .standard, domain: Bundle.main.bundleIdentifier ?? "net.am-cb.simple-recorder")
         let controller = RecorderController(device: device, directory: SyphonDirectory(), defaults: .standard)
         model = RecorderModel(controller: controller)
         super.init()

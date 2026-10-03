@@ -1,5 +1,5 @@
 // movie-info <file>...: prints the size, duration, frame count, frame rate and codec of each movie's video track,
-// and whether the file is fragmented, to check recordings from a script.
+// when its picture starts if that is not at once, and whether the file is fragmented, to check recordings from a script.
 // movie-info --png <picture.png> <file>: also saves the frame in the middle of the movie.
 import AVFoundation
 import AppKit
@@ -48,10 +48,16 @@ for path in arguments {
                 let image = try await generator.image(at: CMTime(seconds: duration / 2, preferredTimescale: 600)).image
                 try NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:])?.write(to: picture)
             }
+            // A movie of a take which began before its source delivered a frame starts with an empty stretch
+            var start = try await track.load(.timeRange).start.seconds
+            for segment in try await track.load(.segments) {
+                guard segment.isEmpty else { break }
+                start += segment.timeMapping.target.duration.seconds
+            }
             let fragmented = (try? Data(contentsOf: url, options: .mappedIfSafe))?.range(of: Data("moof".utf8)) != nil
-            print(String(format: "%@: %d x %d, %.2f s, %d frames, %.2f fps, %@, %.2f Mbit/s%@",
+            print(String(format: "%@: %d x %d, %.2f s, %d frames, %.2f fps, %@, %.2f Mbit/s%@%@",
                          url.lastPathComponent, Int(size.width), Int(size.height), duration, frames, rate, codec, bitrate,
-                         fragmented ? ", fragmented" : ""))
+                         start > 0.01 ? String(format: ", picture from %.2f s", start) : "", fragmented ? ", fragmented" : ""))
         } catch {
             print("\(url.lastPathComponent): \(error.localizedDescription)")
             failed = true
