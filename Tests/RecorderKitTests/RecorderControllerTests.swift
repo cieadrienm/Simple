@@ -641,6 +641,10 @@ final class RecorderControllerTests: XCTestCase {
         let placeStatus = contents(contents(status["source"])["1"])
         XCTAssertEqual(Set(placeStatus.keys), ["online", "width", "height", "fps", "file", "frames", "dropped"])
         XCTAssertEqual(Set(contents(status["source"]).keys), Set((1...8).map(String.init)))
+        // An OSC int, not a JSON true or false
+        let online = try XCTUnwrap(((placeStatus["online"] as? [String: Any])?["VALUE"] as? [Any])?.first as? NSNumber)
+        XCTAssertFalse(CFGetTypeID(online) == CFBooleanGetTypeID(), "online is served as a boolean")
+        XCTAssertEqual(online.intValue, 0)
         for (name, node) in root where name != "status" {
             XCTAssertFalse(((node as? [String: Any])?["DESCRIPTION"] as? String ?? "").isEmpty, "\(name) has no description")
         }

@@ -436,6 +436,10 @@ static NSString *StringFrom(NSArray *arguments)
 - (void)setError:(NSString *)error
 {
     _error = [error copy];
+    if (error.length > 0)
+    {
+        _errorCount++;
+    }
     [self changed];
 }
 
@@ -986,6 +990,11 @@ static NSString *StringFrom(NSArray *arguments)
     parameter.get = ^{
         NSArray<RecorderPlace *> *places = weakSelf.places;
         id value = place <= places.count ? [places[place - 1] valueForKey:key] : nil;
+        if ([typeSpec isEqualToString:@"i"] && [value isKindOfClass:[NSNumber class]])
+        {
+            // A yes or no is an OSC int here, not a JSON true or false
+            value = @([value integerValue]);
+        }
         return @[value ?: (isString ? @"" : @0)];
     };
     return parameter;

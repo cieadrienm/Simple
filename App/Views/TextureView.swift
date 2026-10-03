@@ -1,0 +1,116 @@
+/*
+ TextureView.swift
+ Simple
+
+ Copyright 2026 Adrien Mondot.
+ All rights reserved.
+
+ Redistribution and use in source and binary forms, with or without
+ modification, are permitted provided that the following conditions are met:
+
+ * Redistributions of source code must retain the above copyright
+ notice, this list of conditions and the following disclaimer.
+
+ * Redistributions in binary form must reproduce the above copyright
+ notice, this list of conditions and the following disclaimer in the
+ documentation and/or other materials provided with the distribution.
+
+ THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
+ ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+ WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+ DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDERS BE LIABLE FOR ANY
+ DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+ (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+ LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
+ ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ */
+
+import SwiftUI
+import MetalKit
+
+/// Shows the latest frame of a source, scaled to fit, on black.
+struct TextureView: NSViewRepresentable {
+    let device: MTLDevice
+    /// The frame to show now, and whether its first row is the bottom of the picture. Called for each redraw.
+    let frame: () -> (texture: MTLTexture?, flipped: Bool)
+
+    func makeNSView(context: Context) -> FrameView {
+        FrameView(device: device, frame: frame)
+    }
+
+    func updateNSView(_ view: FrameView, context: Context) {
+        view.frameProvider = frame
+    }
+}
+
+final class FrameView: MTKView {
+    var frameProvider: () -> (texture: MTLTexture?, flipped: Bool)
+    private var queue: MTLCommandQueue?
+    private var pipeline: MTLRenderPipelineState?
+
+    private static let shaders = """
+    #include <metal_stdlib>
+    using namespace metal;
+    struct Vertex {
+        float4 position [[position]];
+        float2 texCoord;
+    };
+    vertex Vertex frameVertex(uint vertexID [[vertex_id]], constant float4 *vertices [[buffer(0)]]) {
+        Vertex out;
+        out.position = float4(vertices[vertexID].xy, 0.0, 1.0);
+        out.texCoord = vertices[vertexID].zw;
+        return out;
+    }
+    fragment float4 frameFragment(Vertex in [[stage_in]], texture2d<float> frame [[texture(0)]]) {
+        constexpr sampler linear(filter::linear, address::clamp_to_edge);
+        return float4(frame.sample(linear, in.texCoord).rgb, 1.0);
+    }
+    """
+
+    init(device: MTLDevice, frame: @escaping () -> (texture: MTLTexture?, flipped: Bool)) {
+        frameProvider = frame
+        super.init(frame: .zero, device: device)
+        colorPixelFormat = .bgra8Unorm
+        clearColor = MTLClearColorMake(0, 0, 0, 1)
+        // A monitor: half the rate of a display is plenty, and leaves the GPU to the encoders
+        preferredFramesPerSecond = 30
+        queue = device.makeCommandQueue()
+        if let library = try? device.makeLibrary(source: Self.shaders, options: nil) {
+            let descriptor = MTLRenderPipelineDescriptor()
+            descriptor.vertexFunction = library.makeFunction(name: "frameVertex")
+            descriptor.fragmentFunction = library.makeFunction(name: "frameFragment")
+            descriptor.colorAttachments[0].pixelFormat = colorPixelFormat
+            pipeline = try? device.makeRenderPipelineState(descriptor: descriptor)
+        }
+    }
+
+    required init(coder: NSCoder) {
+        fatalError("FrameView is made in code")
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        guard let pass = currentRenderPassDescriptor, let drawable = currentDrawable,
+              let buffer = queue?.makeCommandBuffer(), let encoder = buffer.makeRenderCommandEncoder(descriptor: pass) else { return }
+        let (texture, flipped) = frameProvider()
+        if let texture, let pipeline, drawableSize.width > 0, drawableSize.height > 0 {
+            let ratio = min(Float(drawableSize.width) / Float(texture.width), Float(drawableSize.height) / Float(texture.height))
+            let width = Float(texture.width) * ratio / Float(drawableSize.width)
+            let height = Float(texture.height) * ratio / Float(drawableSize.height)
+            let top: Float = flipped ? 1 : 0, bottom: Float = 1 - top
+            // x, y, u, v
+            let vertices: [Float] = [-width, -height, 0, bottom,
+                                     -width, height, 0, top,
+                                     width, -height, 1, bottom,
+                                     width, height, 1, top]
+            encoder.setRenderPipelineState(pipeline)
+            encoder.setVertexBytes(vertices, length: MemoryLayout<Float>.size * vertices.count, index: 0)
+            encoder.setFragmentTexture(texture, index: 0)
+            encoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4)
+        }
+        encoder.endEncoding()
+        buffer.present(drawable)
+        buffer.commit()
+    }
+}

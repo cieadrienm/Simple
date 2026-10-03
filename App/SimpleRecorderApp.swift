@@ -28,16 +28,86 @@
  */
 
 import SwiftUI
+import Metal
+import RecorderKit
 
 @main
 struct SimpleRecorderApp: App {
     /// The name of the app: in the window, in OSCQuery, in the names of movies
     static let name = "Simple Recorder"
 
+    @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
+
     var body: some Scene {
         Window(Self.name, id: "main") {
-            Text(Self.name)
-                .frame(minWidth: 900, minHeight: 560)
+            ContentView(model: delegate.model)
+                .frame(minWidth: 900, minHeight: 520)
         }
+        .defaultSize(width: 1100, height: 680)
+        .commands {
+            CommandGroup(replacing: .newItem) {
+                RecordCommand(model: delegate.model)
+            }
+        }
+    }
+}
+
+/// File ▸ Start Recording, which says Stop Recording while a recording is in progress.
+struct RecordCommand: View {
+    @ObservedObject var model: RecorderModel
+
+    var body: some View {
+        Button(model.isRecording ? "Stop Recording" : "Start Recording") { model.toggleRecording() }
+            .keyboardShortcut("r")
+    }
+}
+
+@MainActor
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    /// The ports we listen on unless the environment says otherwise, which lets a second copy run beside the first
+    private static let defaultOSCPort = 9230
+    private static let defaultOSCQueryPort = 9231
+
+    let model: RecorderModel
+    private var terminationSource: DispatchSourceSignal?
+
+    override init() {
+        // Without Metal there is nothing to show nor to record
+        guard let device = MTLCreateSystemDefaultDevice() else { fatalError("Simple Recorder needs Metal") }
+        let controller = RecorderController(device: device, directory: SyphonDirectory(), defaults: .standard)
+        model = RecorderModel(controller: controller)
+        super.init()
+    }
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        let environment = ProcessInfo.processInfo.environment
+        let oscPort = environment["SIMPLE_OSC_PORT"].flatMap(Int.init) ?? Self.defaultOSCPort
+        let queryPort = environment["SIMPLE_OSCQUERY_PORT"].flatMap(Int.init) ?? Self.defaultOSCQueryPort
+        model.controller.startNetwork(withOSCPort: oscPort, queryPort: queryPort, name: SimpleRecorderApp.name)
+
+        // When we are asked to terminate by a signal (kill, or a script which stops a show) quit as we do from the
+        // menu, so that the movies being recorded are finished
+        signal(SIGTERM, SIG_IGN)
+        let source = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
+        source.setEventHandler {
+            // Not from this block: terminating waits for the movies to be finished, which is reported on the main
+            // queue, and the main queue does nothing else until this block returns
+            NSApp.perform(#selector(NSApplication.terminate(_:)), with: nil, afterDelay: 0, inModes: [.common])
+        }
+        source.resume()
+        terminationSource = source
+    }
+
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        true
+    }
+
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard model.controller.isRecording else { return .terminateNow }
+        // Finish the movies before we go
+        model.controller.stop {
+            NSApp.reply(toApplicationShouldTerminate: true)
+        }
+        return .terminateLater
     }
 }

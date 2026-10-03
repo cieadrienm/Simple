@@ -74,6 +74,9 @@ extern const NSUInteger RecorderMaximumPlaces;
                      directory:(id<SourceDirectory>)directory
                       defaults:(NSUserDefaults *)defaults;
 
+// The device the sources' frames are textures of
+@property (readonly) id<MTLDevice> device;
+
 // Settings. They are saved in the defaults, and a change applies to the next recording.
 @property (nonatomic, copy) NSString *codec;      // /codec: one of +[MovieRecorderSettings codecNames]
 @property (nonatomic, assign) NSInteger width;    // /width, /height: kept for the assembled movie; a source's
@@ -107,6 +110,8 @@ extern const NSUInteger RecorderMaximumPlaces;
 @property (readonly) NSUInteger dropped;          // /status/dropped: frames dropped in all the movies
 @property (readonly, copy) NSString *file;        // /status/file: the first place's movie
 @property (nonatomic, readonly, copy) NSString *error; // /status/error: the last error, empty when a recording starts
+// How many errors there have been: it changes when an error happens again, which error alone does not show
+@property (readonly) NSUInteger errorCount;
 // /status/failure: why the last recording ended, if it was not as asked: it failed, or had nothing to write. Empty
 // otherwise, and when a recording starts. Unlike error, a message which was refused meanwhile does not change it.
 @property (readonly, copy) NSString *recordingError;

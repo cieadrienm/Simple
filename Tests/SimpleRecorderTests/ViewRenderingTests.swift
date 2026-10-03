@@ -1,0 +1,105 @@
+import XCTest
+import SwiftUI
+import RecorderKit
+@testable import SimpleRecorder
+
+/// The window cannot be looked at from here: it is drawn off screen, in the states which matter, to pictures in
+/// build/views which a person (or the agent which wrote the views) reads.
+@MainActor
+final class ViewRenderingTests: XCTestCase {
+    private var recorder: TestRecorder!
+    private var model: RecorderModel!
+    private static let size = NSSize(width: 1100, height: 680)
+
+    override func setUp() async throws {
+        recorder = try TestRecorder()
+        model = RecorderModel(controller: recorder.controller, errorDisplayTime: 30)
+    }
+
+    override func tearDown() async throws {
+        recorder.cleanUp()
+    }
+
+    private func spin(_ seconds: Double) {
+        RunLoop.main.run(until: Date().addingTimeInterval(seconds))
+    }
+
+    private func deliver(_ seconds: Double) {
+        let textures = Dictionary(uniqueKeysWithValues: TestRecorder.titles.enumerated().map { ($1, recorder.texture(640, 360, grey: UInt8(60 + $0 * 40))) })
+        let end = Date().addingTimeInterval(seconds)
+        while Date() < end {
+            for (title, texture) in textures { recorder.directory.source(title)?.deliver(texture) }
+            spin(0.02)
+        }
+    }
+
+    /// Draws the window's content to a bitmap, and to build/views/<name>.png.
+    private func render(_ name: String) throws -> NSBitmapImageRep {
+        let host = NSHostingView(rootView: ContentView(model: model))
+        host.frame = NSRect(origin: .zero, size: Self.size)
+        let window = NSWindow(contentRect: host.frame, styleMask: [.titled], backing: .buffered, defer: false)
+        window.appearance = NSAppearance(named: .darkAqua)
+        window.contentView = host
+        host.layoutSubtreeIfNeeded()
+        spin(0.3)
+        let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+        host.cacheDisplay(in: host.bounds, to: bitmap)
+
+        let folder = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("build/views")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        try XCTUnwrap(bitmap.representation(using: .png, properties: [:])).write(to: folder.appendingPathComponent("\(name).png"))
+        return bitmap
+    }
+
+    /// How many different colours a bitmap has in a sample of its pixels: a blank picture has one.
+    private func colours(_ bitmap: NSBitmapImageRep) -> Int {
+        var seen = Set<String>()
+        for y in stride(from: 0, to: bitmap.pixelsHigh, by: 7) {
+            for x in stride(from: 0, to: bitmap.pixelsWide, by: 7) {
+                if let colour = bitmap.colorAt(x: x, y: y) {
+                    seen.insert("\(Int(colour.redComponent * 255))-\(Int(colour.greenComponent * 255))-\(Int(colour.blueComponent * 255))")
+                }
+            }
+        }
+        return seen.count
+    }
+
+    func testTheWindowWithNothingTicked() throws {
+        XCTAssertGreaterThan(colours(try render("1-nothing-ticked")), 8)
+    }
+
+    func testTheWindowWithThreeSourcesTicked() throws {
+        for title in ["main view - eMotion", "depthMap - eMotion", "A - Simple Server"] { model.tick(title) }
+        deliver(0.8)
+        XCTAssertGreaterThan(colours(try render("2-three-ticked")), 8)
+    }
+
+    func testTheWindowWhileRecording() throws {
+        XCTAssertTrue(recorder.controller.startNetwork(withOSCPort: 19630, queryPort: 19631, name: "Render Test"))
+        for title in ["main view - eMotion", "A - Simple Server"] { model.tick(title) }
+        model.setName("Répétition")
+        model.setCodec("hevc")
+        model.setFPS(50)
+        deliver(0.5)
+        let idle = try render("3a-before-recording")
+        model.toggleRecording()
+        deliver(1.2)
+        let recording = try render("3b-recording")
+        XCTAssertNotEqual(idle.tiffRepresentation, recording.tiffRepresentation, "recording must show")
+        model.toggleRecording()
+        let deadline = Date().addingTimeInterval(10)
+        while model.isRecording && Date() < deadline { spin(0.02) }
+    }
+
+    func testTheWindowAfterAFailureAndWithAnError() throws {
+        model.tick("A - Simple Server")
+        model.toggleRecording()
+        model.toggleRecording()
+        let deadline = Date().addingTimeInterval(10)
+        while model.isRecording && Date() < deadline { spin(0.02) }
+        XCTAssertGreaterThan(colours(try render("4a-failure")), 8)
+        recorder.controller.handle(OSCMessage(address: "/record <0>", arguments: []))
+        XCTAssertGreaterThan(colours(try render("4b-error")), 8)
+    }
+}
