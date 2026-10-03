@@ -75,14 +75,42 @@ final class RecorderModel: ObservableObject {
     @Published private(set) var bitrate: Double = 0
     @Published private(set) var folder = ""
     @Published private(set) var name = ""
+    /// What a recording writes: "separate", "assembled" or "both"
+    @Published private(set) var output = "separate"
+    /// How the sources are assembled: "row", "column", "grid" or "focus"
+    @Published private(set) var layout = "row"
+    @Published private(set) var gap = 0
+    /// The size the assembled picture is fitted into, 0 for the size the sources need
+    @Published private(set) var width = 0
+    @Published private(set) var height = 0
+    /// The size of the assembled picture, zero if there is no source
+    @Published private(set) var pictureSize = CGSize.zero
+    /// Where each source is in the assembled picture: from 0 to 1, from its top left
+    @Published private(set) var titleRects: [CGRect] = []
+    @Published private(set) var assembledFrames = 0
+    @Published private(set) var assembledDropped = 0
     @Published private(set) var oscPort = 0
     @Published private(set) var oscQueryPort = 0
     /// Bytes free on the disk of the folder, nil if it cannot be told
     @Published private(set) var freeSpace: Int64?
 
     var isRecording: Bool { state != "idle" }
-    /// The movies a recording writes: one for each source
-    var movieCount: Int { places.count }
+    /// The movies a recording writes: one for each source, one for them all, or both
+    var movieCount: Int {
+        guard !places.isEmpty else { return 0 }
+        switch output {
+        case "assembled": return 1
+        case "both": return places.count + 1
+        default: return places.count
+        }
+    }
+    static let outputs: [(name: String, title: String)] = [("separate", "Separate"), ("assembled", "Assembled"), ("both", "Both")]
+    static let layouts: [(name: String, title: String, symbol: String)] = [
+        ("row", "Side by side", "rectangle.split.3x1"), ("column", "Stacked", "rectangle.split.1x2"),
+        ("grid", "Mosaic", "rectangle.split.2x2"), ("focus", "One large", "rectangle.trailingthird.inset.filled")]
+    /// The largest picture which can be composed and written, on a side
+    static let largestSide: CGFloat = 16384
+    var pictureIsTooLarge: Bool { pictureSize.width > Self.largestSide || pictureSize.height > Self.largestSide }
     static let codecs: [(name: String, title: String)] = [("h264", "H.264"), ("hevc", "HEVC"), ("prores422", "ProRes 422"), ("prores4444", "ProRes 4444")]
     /// Whether the codec has a bitrate to choose
     var codecHasBitrate: Bool { codec == "h264" || codec == "hevc" }
@@ -123,6 +151,13 @@ final class RecorderModel: ObservableObject {
         set(\.bitrate, controller.bitrate)
         set(\.folder, controller.folder)
         set(\.name, controller.name)
+        set(\.output, controller.output)
+        set(\.layout, controller.layout)
+        set(\.gap, controller.gap)
+        set(\.width, controller.width)
+        set(\.height, controller.height)
+        set(\.assembledFrames, Int(controller.assembledFrames))
+        set(\.assembledDropped, Int(controller.assembledDropped))
         set(\.oscPort, controller.oscPort)
         set(\.oscQueryPort, controller.oscQueryPort)
         set(\.failure, controller.recordingError)
@@ -132,6 +167,13 @@ final class RecorderModel: ObservableObject {
                   file: $0.file, frames: Int($0.frames), dropped: Int($0.dropped))
         }
         set(\.places, chosen)
+        let picture = controller.assembledLayout
+        let size = chosen.isEmpty ? CGSize.zero : picture.size
+        set(\.pictureSize, size)
+        set(\.titleRects, chosen.isEmpty ? [] : picture.frames.map {
+            let rect = $0.rectValue
+            return CGRect(x: rect.minX / size.width, y: rect.minY / size.height, width: rect.width / size.width, height: rect.height / size.height)
+        })
         let titles = Set(chosen.map(\.title))
         set(\.available, controller.availableSources.filter { !titles.contains($0.title) }.map { Source(title: $0.title, detail: $0.detail) })
 
@@ -180,4 +222,12 @@ final class RecorderModel: ObservableObject {
     func setBitrate(_ bitrate: Double) { controller.bitrate = bitrate }
     func setFolder(_ folder: String) { controller.folder = folder }
     func setName(_ name: String) { controller.name = name }
+    func setOutput(_ output: String) { controller.output = output }
+    func setLayout(_ layout: String) { controller.layout = layout }
+    func setGap(_ gap: Int) { controller.gap = gap }
+    /// 0 and 0 for the size the sources need
+    func setSize(width: Int, height: Int) {
+        controller.width = width
+        controller.height = height
+    }
 }

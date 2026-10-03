@@ -30,10 +30,13 @@
 import SwiftUI
 import AppKit
 
-/// The settings: of the movies, and of where they go.
+/// The settings: of the movies, of the assembled picture, and of where they go.
 struct InspectorView: View {
     @ObservedObject var model: RecorderModel
     private static let rates: [Double] = [0, 24, 25, 30, 50, 60]
+    private static let sizes: [(width: Int, height: Int)] = [(1920, 1080), (3840, 2160)]
+    /// "Custom" was chosen: the fields stay even when what they hold is one of the sizes offered
+    @State private var customSize = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -62,6 +65,38 @@ struct InspectorView: View {
                 }
             }
 
+            Theme.sectionTitle("Assembled").padding(.top, 10)
+            // The picture of a take does not change: these are for the next one
+            Group {
+                row("Size") {
+                    Picker("", selection: Binding(get: { sizeChoice }, set: { chooseSize($0) })) {
+                        Text("Automatic").tag("auto")
+                        ForEach(Self.sizes, id: \.width) { Text(verbatim: "\($0.width) \u{00D7} \($0.height)").tag("\($0.width)x\($0.height)") }
+                        Text("Custom").tag("custom")
+                    }
+                    .labelsHidden()
+                }
+                if sizeChoice == "custom" {
+                    row("") {
+                        HStack(spacing: 4) {
+                            TextField("Width", value: Binding(get: { model.width }, set: { model.setSize(width: $0, height: model.height) }), format: .number.grouping(.never))
+                                .textFieldStyle(.roundedBorder)
+                            Text("\u{00D7}").font(.system(size: 11)).foregroundStyle(Theme.textFaint)
+                            TextField("Height", value: Binding(get: { model.height }, set: { model.setSize(width: model.width, height: $0) }), format: .number.grouping(.never))
+                                .textFieldStyle(.roundedBorder)
+                        }
+                    }
+                }
+                row("Gap") {
+                    HStack(spacing: 6) {
+                        TextField("0", value: Binding(get: { model.gap }, set: { model.setGap($0) }), format: .number.grouping(.never))
+                            .textFieldStyle(.roundedBorder)
+                        Text("pixels").font(.system(size: 11)).foregroundStyle(Theme.textFaint)
+                    }
+                }
+            }
+            .disabled(model.isRecording)
+
             Theme.sectionTitle("Files").padding(.top, 10)
             row("Folder") {
                 Button(action: chooseFolder) {
@@ -74,7 +109,7 @@ struct InspectorView: View {
                 TextField("Date and time", text: Binding(get: { model.name }, set: { model.setName($0) }))
                     .textFieldStyle(.roundedBorder)
             }
-            Text(model.movieCount > 1 ? "Each movie adds its source\u{2019}s title to the name." : "A movie is never overwritten: a number is added.")
+            Text(namingHint)
                 .font(.system(size: 10)).foregroundStyle(Theme.textFaint)
                 .fixedSize(horizontal: false, vertical: true)
             Spacer()
@@ -82,6 +117,35 @@ struct InspectorView: View {
         .controlSize(.small)
         .padding(14)
         .background(Theme.panel)
+    }
+
+    private var namingHint: String {
+        switch model.output {
+        case "both": return "The assembled movie has the name; each source\u{2019}s adds its title."
+        case "assembled": return "A movie is never overwritten: a number is added."
+        default: return model.movieCount > 1 ? "Each movie adds its source\u{2019}s title to the name." : "A movie is never overwritten: a number is added."
+        }
+    }
+
+    /// "auto", one of the sizes offered as "1920x1080", or "custom"
+    private var sizeChoice: String {
+        if customSize { return "custom" }
+        if model.width == 0 || model.height == 0 { return "auto" }
+        return Self.sizes.contains { $0.width == model.width && $0.height == model.height } ? "\(model.width)x\(model.height)" : "custom"
+    }
+
+    private func chooseSize(_ choice: String) {
+        customSize = choice == "custom"
+        if choice == "auto" {
+            model.setSize(width: 0, height: 0)
+        } else if let size = Self.sizes.first(where: { "\($0.width)x\($0.height)" == choice }) {
+            model.setSize(width: size.width, height: size.height)
+        } else if model.width == 0 || model.height == 0 {
+            // The fields start from the picture as it is
+            let picture = model.pictureSize
+            model.setSize(width: picture.width > 0 ? min(Int(picture.width), Int(RecorderModel.largestSide)) : 1920,
+                          height: picture.height > 0 ? min(Int(picture.height), Int(RecorderModel.largestSide)) : 1080)
+        }
     }
 
     /// The rates offered, with the one in use if it is another

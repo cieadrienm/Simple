@@ -42,6 +42,15 @@ struct TakeBar: View {
                 .foregroundStyle(model.isRecording ? Theme.text : Theme.textDim)
             caption
             Spacer()
+            // What the next take writes: it cannot change during one
+            Picker("", selection: Binding(get: { model.output }, set: { model.setOutput($0) })) {
+                ForEach(RecorderModel.outputs, id: \.name) { Text($0.title).tag($0.name) }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .frame(width: 250)
+            .disabled(model.isRecording)
+            .help("A movie for each source, one movie of the sources assembled, or both")
         }
         .padding(.horizontal, 16)
         .frame(height: 56)

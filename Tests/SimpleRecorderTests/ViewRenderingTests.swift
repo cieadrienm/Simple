@@ -102,4 +102,47 @@ final class ViewRenderingTests: XCTestCase {
         recorder.controller.handle(OSCMessage(address: "/record <0>", arguments: []))
         XCTAssertGreaterThan(colours(try render("4b-error")), 8)
     }
+
+    // MARK: The assembled picture
+
+    private let three = ["main view - eMotion", "depthMap - eMotion", "A - Simple Server"]
+
+    func testTheWindowInEachLayout() throws {
+        for title in three { model.tick(title) }
+        deliver(0.6)
+        var pictures: [Data?] = []
+        for layout in ["row", "column", "grid", "focus"] {
+            model.setLayout(layout)
+            deliver(0.4)
+            pictures.append(try render("5-layout-\(layout)").tiffRepresentation)
+        }
+        XCTAssertEqual(Set(pictures).count, 4, "each layout must show")
+    }
+
+    func testTheWindowWhileRecordingBoth() throws {
+        for title in three { model.tick(title) }
+        model.setOutput("both")
+        model.setLayout("focus")
+        model.setGap(8)
+        model.setSize(width: 1920, height: 1080)
+        model.setName("Répétition")
+        deliver(0.5)
+        model.toggleRecording()
+        deliver(1.2)
+        XCTAssertGreaterThan(colours(try render("6-recording-both")), 8)
+        model.toggleRecording()
+        let deadline = Date().addingTimeInterval(10)
+        while model.isRecording && Date() < deadline { spin(0.02) }
+    }
+
+    func testTheWindowWithASourceAway() throws {
+        for title in three { model.tick(title) }
+        model.setOutput("assembled")
+        deliver(0.5)
+        // depthMap's application quits; the two others go on
+        recorder.directory.setTitles(TestRecorder.titles.filter { $0 != "depthMap - eMotion" })
+        deliver(1.5)
+        XCTAssertEqual(model.places.map(\.isOnline), [true, false, true])
+        XCTAssertGreaterThan(colours(try render("7-one-away")), 8)
+    }
 }

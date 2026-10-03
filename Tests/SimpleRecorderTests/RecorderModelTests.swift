@@ -169,4 +169,81 @@ final class RecorderModelTests: XCTestCase {
         XCTAssertEqual(model.oscPort, 19530)
         XCTAssertEqual(model.oscQueryPort, 19531)
     }
+
+    // MARK: The assembled picture
+
+    func testOutputLayoutGapAndSizeFollowTheControllerBothWays() {
+        XCTAssertEqual(model.output, "separate")
+        XCTAssertEqual(model.layout, "row")
+        send("/output", "both")
+        send("/layout", "grid")
+        send("/gap", NSNumber(value: 12))
+        send("/width", NSNumber(value: 1920))
+        send("/height", NSNumber(value: 1080))
+        XCTAssertEqual(model.output, "both")
+        XCTAssertEqual(model.layout, "grid")
+        XCTAssertEqual(model.gap, 12)
+        XCTAssertEqual(model.width, 1920)
+        XCTAssertEqual(model.height, 1080)
+
+        model.setOutput("assembled")
+        model.setLayout("focus")
+        model.setGap(4)
+        model.setSize(width: 0, height: 0)
+        XCTAssertEqual(recorder.controller.output, "assembled")
+        XCTAssertEqual(recorder.controller.layout, "focus")
+        XCTAssertEqual(recorder.controller.gap, 4)
+        XCTAssertEqual(recorder.controller.width, 0)
+        XCTAssertEqual(recorder.controller.height, 0)
+        XCTAssertEqual(model.output, "assembled")
+        XCTAssertEqual(model.layout, "focus")
+    }
+
+    func testMovieCountFollowsTheOutput() {
+        XCTAssertEqual(model.movieCount, 0)
+        for title in TestRecorder.titles.prefix(3) { model.tick(title) }
+        XCTAssertEqual(model.movieCount, 3)
+        model.setOutput("assembled")
+        XCTAssertEqual(model.movieCount, 1)
+        model.setOutput("both")
+        XCTAssertEqual(model.movieCount, 4)
+        for _ in 0..<3 { model.untick(place: 1) }
+        XCTAssertEqual(model.movieCount, 0, "no source, no movie")
+    }
+
+    func testTheTitlesRectanglesFollowTheLayout() {
+        XCTAssertEqual(model.pictureSize, .zero)
+        XCTAssertEqual(model.titleRects, [])
+        // Sources never seen count as 1920 × 1080
+        model.tick("A - Simple Server")
+        model.tick("B - Simple Server")
+        XCTAssertEqual(model.pictureSize, CGSize(width: 3840, height: 1080))
+        XCTAssertEqual(model.titleRects, [CGRect(x: 0, y: 0, width: 0.5, height: 1), CGRect(x: 0.5, y: 0, width: 0.5, height: 1)])
+        model.setLayout("column")
+        XCTAssertEqual(model.pictureSize, CGSize(width: 1920, height: 2160))
+        XCTAssertEqual(model.titleRects, [CGRect(x: 0, y: 0, width: 1, height: 0.5), CGRect(x: 0, y: 0.5, width: 1, height: 0.5)])
+        // They follow the sources as their sizes become known
+        recorder.directory.source("A - Simple Server")?.deliver(recorder.texture(960, 1080))
+        spin(0.4)
+        model.setLayout("row")
+        XCTAssertEqual(model.pictureSize, CGSize(width: 2880, height: 1080))
+    }
+
+    func testTheAssembledMoviesFramesAreTheTakes() {
+        model.tick("A - Simple Server")
+        model.tick("B - Simple Server")
+        model.setOutput("both")
+        model.toggleRecording()
+        let texture = recorder.texture()
+        let end = Date().addingTimeInterval(0.6)
+        while Date() < end {
+            for title in ["A - Simple Server", "B - Simple Server"] { recorder.directory.source(title)?.deliver(texture) }
+            spin(0.02)
+        }
+        XCTAssertGreaterThan(model.assembledFrames, 5)
+        XCTAssertEqual(model.frames, model.assembledFrames, "the take bar counts the assembled movie's frames")
+        model.toggleRecording()
+        let deadline = Date().addingTimeInterval(10)
+        while model.isRecording && Date() < deadline { spin(0.02) }
+    }
 }

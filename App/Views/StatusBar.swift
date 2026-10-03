@@ -59,6 +59,7 @@ struct StatusBar: View {
         if let free = model.freeSpace {
             parts.append("\(ByteCountFormatter.string(fromByteCount: free, countStyle: .file)) free")
         }
+        // What the next take writes, which follows the output chosen
         parts.append(model.movieCount == 1 ? "1 movie" : "\(model.movieCount) movies")
         return parts.joined(separator: " \u{00B7} ")
     }
