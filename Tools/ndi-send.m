@@ -6,8 +6,11 @@
 // a 440 Hz sine, channel 2 880 Hz, channels 3 and 4 1320 and 1760 Hz, at -12 dB; and once each second a click, 5 ms of full
 // scale on every channel instead of the tone, at the moment of one picture which is white all over (the flash), so that the
 // step between sound and picture can be measured in a recording (movie-info --sync). Both threads are paced by the SDK's
-// clock and count their seconds from the same start: second k's click begins at sample k * rate, its flash is frame
-// round(k * fps), so the two are the same instant on that clock (the first second has neither).
+// clock; the sound thread counts samples and, as it sends the piece which begins second k (sample k * rate), notes the wall
+// time and k. The picture loop flashes the first frame it sends after a new k appears, so a flash follows its click by at
+// most a frame period, whatever the load, and cannot drift from it (the first second has neither). Wall time is one
+// monotonic clock read at the start (t0). Every 60 s and at exit a line on stderr compares the wall time with the sound
+// and the frames sent; with NDI_SEND_DEBUG=1 each second's delay from click to flash is printed too.
 // The library is loaded at run time, as the app does, and is not linked.
 #import <Foundation/Foundation.h>
 #include <dlfcn.h>
@@ -17,11 +20,19 @@
 #include <math.h>
 #include <pthread.h>
 #include <stdatomic.h>
+#include <time.h>
 #include "Processing.NDI.Lib.h"
 #include "Processing.NDI.DynamicLoad.h"
 
 static volatile sig_atomic_t stopRequested = 0;
 static void requestStop(int signal) { (void)signal; stopRequested = 1; }
+
+static double wallSeconds(void) { return clock_gettime_nsec_np(CLOCK_MONOTONIC) / 1e9; }
+
+/// What the two threads share: the click the sound thread last sent (its second, and the wall time it was sent at)
+static _Atomic unsigned long clickSecond = 0;
+static _Atomic double clickWallTime = 0;
+static _Atomic unsigned long long samplesSent = 0;
 
 /// What the sound thread needs: the sender, the format, and the one start both threads count their seconds from.
 typedef struct {
@@ -53,7 +64,13 @@ static void *sendTone(void *argument)
                     : 0.25f * (float)sin(2 * M_PI * frequencies[c] * (double)(index % (unsigned long long)job->rate) / job->rate);
             }
         }
+        if (first >= (unsigned long long)job->rate && first % (unsigned long long)job->rate == 0) {
+            // The piece which begins second k (a piece is 1/50 s, so k * rate is where one begins)
+            atomic_store(&clickWallTime, wallSeconds());
+            atomic_store(&clickSecond, (unsigned long)(first / (unsigned long long)job->rate));
+        }
         job->ndi->send_send_audio_v3(job->sender, &frame); // paced by the SDK's audio clock
+        atomic_fetch_add(&samplesSent, (unsigned long long)piece);
     }
     free(samples);
     return NULL;
@@ -148,14 +165,18 @@ int main(int argc, char **argv) { @autoreleasepool {
     int marker = (int)(width * 0.07);
     if (marker < 4) marker = 4;
     int barWidth = width / 40 > 2 ? width / 40 : 2;
+    double t0 = wallSeconds(), nextReport = 60, minDelay = 1e9, maxDelay = -1e9;
+    unsigned long flashedSecond = 0, framesSent = 0;
+    BOOL debug = getenv("NDI_SEND_DEBUG") != NULL;
     for (unsigned long n = 0; !stopRequested; n++) {
         double seconds = n / fps;
         uint8_t grey = (uint8_t)(102 + 40 * sin(seconds * 2 * M_PI / 4));
         int barX = (int)(fmod(seconds / 5, 1.0) * (width - barWidth));
         uint8_t alpha = bgrx ? 0 : 255;
         // Frame round(k * fps) is the picture of second k, where the click of second k begins
-        double k = floor(n / fps + 0.5);
-        BOOL flash = tone && k >= 1 && (unsigned long)floor(k * fps + 0.5) == n;
+        // The first frame after a click was sent is the flash
+        unsigned long seen = tone ? atomic_load(&clickSecond) : 0;
+        BOOL flash = seen > flashedSecond;
         if (flash) {
             memset(pixels, 255, stride * height);
         } else for (int y = 0; y < height; y++) {
@@ -167,7 +188,25 @@ int main(int argc, char **argv) { @autoreleasepool {
                 row[x * 4] = b; row[x * 4 + 1] = g; row[x * 4 + 2] = r; row[x * 4 + 3] = alpha;
             }
         }
+        if (flash) {
+            double delay = (wallSeconds() - atomic_load(&clickWallTime)) * 1000;
+            flashedSecond = seen;
+            if (delay < minDelay) minDelay = delay;
+            if (delay > maxDelay) maxDelay = delay;
+            if (debug) fprintf(stderr, "ndi-send: second %lu, flash %.1f ms after its click\n", seen, delay);
+        }
         ndi->send_send_video_v2(sender, &frame);
+        framesSent++;
+        if (tone && wallSeconds() - t0 >= nextReport) {
+            fprintf(stderr, "ndi-send: %.1f s elapsed, sound %.3f s, %lu frames\n", wallSeconds() - t0,
+                    (double)atomic_load(&samplesSent) / rate, framesSent);
+            nextReport += 60;
+        }
+    }
+    if (tone) {
+        fprintf(stderr, "ndi-send: %.1f s elapsed, sound %.3f s, %lu frames\n", wallSeconds() - t0,
+                (double)atomic_load(&samplesSent) / rate, framesSent);
+        if (debug && maxDelay >= minDelay) fprintf(stderr, "ndi-send: click to flash min %.1f ms, max %.1f ms\n", minDelay, maxDelay);
     }
     if (tone) pthread_join(toneThread, NULL);
     ndi->send_destroy(sender);

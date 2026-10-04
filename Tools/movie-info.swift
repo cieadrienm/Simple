@@ -4,7 +4,7 @@
 // not silence begins; a movie without one gets no more than the first line.
 // movie-info --png <picture.png> <file>: also saves the frame in the middle of the movie.
 // movie-info --sync <file> [--region x y w h]: for a movie made from `ndi-send --tone`, the time of each flash (the first
-// picture whose mean luminance is high, after one which was not) and of each click (the first sample above 0.9 after
+// picture whose mean luminance is high, after one which was not) and of each click (the first sample above 0.7 after
 // 100 ms below 0.5), their difference (picture minus click) in milliseconds, and its minimum, maximum and mean. The region
 // (fractions of the picture, 0 to 1) restricts the flashes to one source's place in an assembled picture.
 import AVFoundation
@@ -42,7 +42,7 @@ func readSound(_ asset: AVAsset, _ track: AVAssetTrack) throws -> (buffers: [Sou
     return (buffers, rate, channels)
 }
 
-/// Times of the clicks in channel 0: the first sample above 0.9 after 100 ms below 0.5.
+/// Times of the clicks in channel 0: the first sample above 0.7 after 100 ms below 0.5.
 func clickTimes(_ buffers: [SoundBuffer], rate: Double, channels: Int) -> [Double] {
     var times: [Double] = []
     var quiet = 0
@@ -57,7 +57,7 @@ func clickTimes(_ buffers: [SoundBuffer], rate: Double, channels: Int) -> [Doubl
             } else {
                 if quiet >= needed { armed = true }
                 quiet = 0
-                if armed, value > 0.9 {
+                if armed, value > 0.7 {
                     times.append(buffer.start + Double(index) / rate)
                     armed = false
                 }
@@ -109,11 +109,11 @@ func sync(_ url: URL, region: [Double]) async throws -> Bool {
     var differences: [Double] = []
     for (second, flash) in flashes.enumerated() {
         guard let click = clicks.min(by: { abs($0 - flash) < abs($1 - flash) }), abs(click - flash) < 0.5 else {
-            print(String(format: "second %d: flash at %.3f s, no click", second + 1, flash))
+            print(String(format: "flash %d: flash at %.3f s, no click", second + 1, flash))
             continue
         }
         differences.append((flash - click) * 1000)
-        print(String(format: "second %d: flash at %.3f s, click at %.3f s, picture minus click %+.1f ms", second + 1, flash, click, (flash - click) * 1000))
+        print(String(format: "flash %d: flash at %.3f s, click at %.3f s, picture minus click %+.1f ms", second + 1, flash, click, (flash - click) * 1000))
     }
     guard let low = differences.min(), let high = differences.max() else {
         print("\(url.lastPathComponent): \(flashes.count) flashes, \(clicks.count) clicks, none paired")

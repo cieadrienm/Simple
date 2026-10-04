@@ -100,7 +100,7 @@ Simple Recorder listens for OSC on UDP port **9230** and describes its parameter
 | `/status/assembled/file`, `/frames`, `/dropped` | string, int, int | read | The assembled movie |
 | `/status/file`, `/status/frames` | string, int | read | The assembled movie or, if there is none, the first source's |
 
-A source's own movie is always the size of the source: `/width` and `/height` concern the assembled picture only. `/output`, `/layout`, `/gap`, `/width` and `/height` can be set while recording; they apply to the next recording.
+A source's own movie is always the size of the source: `/width` and `/height` concern the assembled picture only. `/output`, `/layout`, `/gap`, `/width`, `/height` and `/sound` can be set while recording; they apply to the next recording.
 
 OSC has no passwords: any machine which can reach Simple Recorder's port can start and stop recordings and change where they are written. Use it on a network you trust.
 
