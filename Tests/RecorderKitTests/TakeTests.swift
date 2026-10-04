@@ -444,4 +444,172 @@ final class TakeTests: XCTestCase {
         XCTAssertTrue(take.isRecording, "the take goes on")
         XCTAssertNil(finish(at: 130), "the movie has frames: it is kept")
     }
+
+    // MARK: Sound
+
+    /// Sound made by a source from one time to another, in pieces of 10 ms which arrive when their last sample is
+    /// made. Each piece is one object, given to every source of `indexes`.
+    private final class SoundFeed {
+        let indexes: [Int], from: Double, to: Double
+        let rate = 48000.0, piece = 480
+        let value: (Int) -> Float
+        private(set) var given = 0
+
+        init(_ indexes: [Int], from: Double = 100, to: Double, value: @escaping (Int) -> Float) {
+            self.indexes = indexes
+            self.from = from
+            self.to = to
+            self.value = value
+        }
+
+        /// A tone of half the full scale
+        convenience init(_ indexes: [Int], from: Double = 100, to: Double, frequency: Double) {
+            self.init(indexes, from: from, to: to) { Float(0.5 * sin(2 * .pi * frequency * Double($0) / 48000)) }
+        }
+
+        /// Gives the take the pieces which have arrived by a time.
+        func give(to take: Take, upTo time: Double) {
+            let total = Int(((to - from) * rate).rounded())
+            while true {
+                let count = min(piece, total - given)
+                guard count > 0 else { return }
+                let arrival = from + Double(given + count) / rate
+                guard arrival <= time + 1e-9 else { return }
+                var samples = [Float](repeating: 0, count: count * 2)
+                for index in 0..<count {
+                    samples[2 * index] = value(given + index)
+                    samples[2 * index + 1] = value(given + index)
+                }
+                let sound = SourceSound(interleavedStereoSamples: samples, frameCount: UInt(count), sampleRate: rate)!
+                for index in indexes { take.append(sound, fromSourceAt: UInt(index), atTime: arrival) }
+                given += count
+            }
+        }
+    }
+
+    /// Starts a take of 320 × 180 sources at 100, records their frames and the assembled picture 30 times a second
+    /// until `end` and, before each, the sound which has arrived; finishes at `end`.
+    private func recordWithSound(_ titles: [String], output: TakeOutput, soundSources: [Int], assembledSoundIndex: Int?,
+                                 sound: [SoundFeed], end: Double = 102, settings: MovieRecorderSettings = MovieRecorderSettings(),
+                                 sourcesFrom: Double = 100, assembledFrom: Double = 100) throws {
+        let assembledSize = NSSize(width: 320 * titles.count, height: 180)
+        try take.start(withSourceTitles: titles, sizes: titles.map { _ in NSNull() }, output: output, assembledSize: assembledSize,
+                       soundSources: IndexSet(soundSources), assembledSound: assembledSoundIndex.map(UInt.init) ?? UInt(NSNotFound),
+                       name: "take", folder: folder, settings: settings, atTime: 100)
+        let source = texture(320, 180), picture = texture(Int(assembledSize.width), 180)
+        let count = Int(((end - 100) * 30).rounded())
+        for frame in 0..<count {
+            let time = 100 + Double(frame) / 30
+            sound.forEach { $0.give(to: take, upTo: time) }
+            if output != .assembled && time >= sourcesFrom - 1e-9 {
+                for index in titles.indices { append(source, from: index, at: time) }
+            }
+            if output != .separate && time >= assembledFrom - 1e-9 { appendAssembled(picture, at: time) }
+        }
+        sound.forEach { $0.give(to: take, upTo: end) }
+        XCTAssertNil(finish(at: end))
+    }
+
+    func testASourcesSoundGoesToItsMovie() throws {
+        try recordWithSound(["A", "B"], output: .separate, soundSources: [1], assembledSoundIndex: nil,
+                            sound: [SoundFeed([1], to: 102, frequency: 1000)])
+
+        XCTAssertEqual(take.movies.map(\.hasSound), [false, true])
+        XCTAssertFalse(try SoundInfo.hasSound(take.movies[0].url))
+        let sound = try SoundInfo(take.movies[1].url)
+        XCTAssertEqual(sound.frequency(from: 0.2, to: 1.8), 1000, accuracy: 5)
+        XCTAssertEqual(take.movies[1].soundWritten, 2, accuracy: 0.03)
+        XCTAssertEqual(take.movies[1].soundLeftOut, 0)
+        XCTAssertEqual(take.movies[0].soundWritten, 0)
+    }
+
+    func testSoundFromASourceWithoutATrackIsIgnored() throws {
+        // Settings which ask for sound do not give a track to a source which is not chosen
+        let settings = MovieRecorderSettings()
+        settings.recordsSound = true
+        try recordWithSound(["A", "B"], output: .separate, soundSources: [1], assembledSoundIndex: nil,
+                            sound: [SoundFeed([0], to: 102, frequency: 1000)], settings: settings)
+
+        XCTAssertFalse(take.movies[0].hasSound)
+        XCTAssertEqual(take.movies[0].soundWritten, 0)
+        XCTAssertFalse(try SoundInfo.hasSound(take.movies[0].url))
+        XCTAssertFalse(try SoundInfo.hasSound(take.movies[1].url), "B's track received nothing: there is none")
+        XCTAssertEqual(take.movies.map(\.framesWritten), [60, 60])
+    }
+
+    func testTheAssembledMovieTakesOneSourcesSound() throws {
+        try recordWithSound(["A", "B", "C"], output: .both, soundSources: [1, 2], assembledSoundIndex: 2,
+                            sound: [SoundFeed([1], to: 102, frequency: 1000), SoundFeed([2], to: 102, frequency: 2000)])
+
+        let assembled = try XCTUnwrap(take.assembledMovie)
+        XCTAssertTrue(assembled.hasSound)
+        XCTAssertEqual(try SoundInfo(assembled.url).frequency(from: 0.2, to: 1.8), 2000, accuracy: 10)
+        XCTAssertEqual(assembled.soundWritten, 2, accuracy: 0.03)
+        XCTAssertFalse(try SoundInfo.hasSound(take.movies[0].url))
+        XCTAssertEqual(try SoundInfo(take.movies[1].url).frequency(from: 0.2, to: 1.8), 1000, accuracy: 5)
+        XCTAssertEqual(try SoundInfo(take.movies[2].url).frequency(from: 0.2, to: 1.8), 2000, accuracy: 10)
+    }
+
+    func testAssembledAloneTakesTheSound() throws {
+        // The source need not be among those with a track: they have no movie
+        try recordWithSound(["A", "B"], output: .assembled, soundSources: [], assembledSoundIndex: 1,
+                            sound: [SoundFeed([0], to: 102, frequency: 2000), SoundFeed([1], to: 102, frequency: 1000)])
+
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: folder.path), ["take.mov"])
+        let assembled = try XCTUnwrap(take.assembledMovie)
+        XCTAssertTrue(assembled.hasSound)
+        let sound = try SoundInfo(assembled.url)
+        XCTAssertEqual(sound.frequency(from: 0.2, to: 1.8), 1000, accuracy: 5)
+        XCTAssertEqual(sound.duration, 2, accuracy: 0.03)
+    }
+
+    func testNoSourceChosenLeavesTheAssembledMovieSilent() throws {
+        try recordWithSound(["A", "B"], output: .both, soundSources: [0, 1], assembledSoundIndex: nil,
+                            sound: [SoundFeed([0], to: 102, frequency: 1000), SoundFeed([1], to: 102, frequency: 2000)])
+
+        let assembled = try XCTUnwrap(take.assembledMovie)
+        XCTAssertFalse(assembled.hasSound)
+        XCTAssertEqual(assembled.soundWritten, 0)
+        XCTAssertFalse(try SoundInfo.hasSound(assembled.url), "no sound track at all")
+        XCTAssertTrue(try SoundInfo.hasSound(take.movies[0].url))
+        XCTAssertTrue(try SoundInfo.hasSound(take.movies[1].url))
+    }
+
+    func testAllTheMoviesOfATakeShareItsClockForSoundToo() throws {
+        // A click at 101, the same object given to both sources; B's pictures and the assembled ones begin later
+        let click = SoundFeed([0, 1], to: 102) { $0 == 48000 ? 1 : 0 }
+        try recordWithSound(["A", "B"], output: .both, soundSources: [0, 1], assembledSoundIndex: 1, sound: [click],
+                            sourcesFrom: 100, assembledFrom: 100.5)
+
+        let urls = take.movies.map(\.url) + [try XCTUnwrap(take.assembledMovie).url]
+        let clicks = try urls.map { try SoundInfo($0).clicks() }
+        for (url, found) in zip(urls, clicks) {
+            XCTAssertEqual(found.count, 1, url.lastPathComponent)
+            XCTAssertEqual(try XCTUnwrap(found.first), 1, accuracy: 0.03, url.lastPathComponent)
+        }
+        XCTAssertEqual(try XCTUnwrap(clicks[0].first), try XCTUnwrap(clicks[1].first), accuracy: 1.0 / 30)
+        XCTAssertEqual(try XCTUnwrap(clicks[0].first), try XCTUnwrap(clicks[2].first), accuracy: 1.0 / 30)
+    }
+
+    func testAnIndexWhichIsNotASourceIsIgnored() throws {
+        // A track asked for a source which is not there, the assembled movie's sound from one which is not there either
+        try recordWithSound(["A"], output: .both, soundSources: [0, 5], assembledSoundIndex: 7,
+                            sound: [SoundFeed([0], to: 101, frequency: 1000), SoundFeed([5, 7], to: 101, frequency: 2000)],
+                            end: 101)
+
+        XCTAssertEqual(take.movies.count, 1)
+        XCTAssertEqual(try SoundInfo(take.movies[0].url).frequency(from: 0.1, to: 0.9), 1000, accuracy: 5)
+        let assembled = try XCTUnwrap(take.assembledMovie)
+        XCTAssertFalse(assembled.hasSound)
+        XCTAssertFalse(try SoundInfo.hasSound(assembled.url))
+    }
+
+    func testSoundAloneMakesNoTake() throws {
+        try take.start(withSourceTitles: ["A"], sizes: [NSNull()], output: .both, assembledSize: NSSize(width: 320, height: 180),
+                       soundSources: IndexSet([0]), assembledSound: 0, name: "take", folder: folder,
+                       settings: MovieRecorderSettings(), atTime: 100)
+        SoundFeed([0], to: 101, frequency: 1000).give(to: take, upTo: 101)
+        XCTAssertNotNil(finish(at: 101), "no frame was received")
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: folder.path), [])
+    }
 }

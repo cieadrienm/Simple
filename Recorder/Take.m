@@ -33,6 +33,7 @@
 @property (readwrite, copy) NSString *sourceTitle;
 @property (readwrite) NSURL *url;
 @property (readwrite, nullable) NSError *error;
+@property (readwrite) BOOL hasSound;
 @property (strong) MovieRecorder *recorder;
 @end
 
@@ -46,6 +47,16 @@
 - (NSUInteger)framesDropped
 {
     return self.recorder.framesDropped;
+}
+
+- (NSTimeInterval)soundWritten
+{
+    return self.recorder.soundWritten;
+}
+
+- (NSTimeInterval)soundLeftOut
+{
+    return self.recorder.soundLeftOut;
 }
 
 @end
@@ -72,6 +83,8 @@ static const CGFloat kLargestSide = 16384;
     NSArray<TakeMovie *> *_movies;
     MovieRecorder *_assembledRecorder;
     TakeMovie *_assembledMovie;
+    // The source whose sound the assembled movie takes, NSNotFound for none
+    NSUInteger _assembledSoundIndex;
     BOOL _recording;
     BOOL _finishing;
 }
@@ -84,6 +97,7 @@ static const CGFloat kLargestSide = 16384;
         _device = device;
         _recorders = [NSMutableArray array];
         _movies = @[];
+        _assembledSoundIndex = NSNotFound;
     }
     return self;
 }
@@ -216,6 +230,23 @@ static NSError *TakeError(NSString *description)
                        atTime:(NSTimeInterval)time
                         error:(NSError **)error
 {
+    return [self startWithSourceTitles:titles sizes:sizes output:output assembledSize:assembledSize
+                          soundSources:[NSIndexSet indexSet] assembledSoundIndex:NSNotFound
+                                  name:name folder:folder settings:settings atTime:time error:error];
+}
+
+- (BOOL)startWithSourceTitles:(NSArray<NSString *> *)titles
+                        sizes:(NSArray *)sizes
+                       output:(TakeOutput)output
+                assembledSize:(NSSize)assembledSize
+                 soundSources:(NSIndexSet *)soundSources
+          assembledSoundIndex:(NSUInteger)assembledSoundIndex
+                         name:(NSString *)name
+                       folder:(NSURL *)folder
+                     settings:(MovieRecorderSettings *)settings
+                       atTime:(NSTimeInterval)time
+                        error:(NSError **)error
+{
     NSString *problem = nil;
     BOOL isFolder = NO;
     @synchronized (self)
@@ -294,6 +325,10 @@ static NSError *TakeError(NSString *description)
 
     // The assembled movie first: its size is known, and if the codec cannot write it nothing has been started
     TakeMovie *assembledMovie = nil;
+    if (!assembled || assembledSoundIndex >= titles.count)
+    {
+        assembledSoundIndex = NSNotFound;
+    }
     if (assembled)
     {
         assembledMovie = [[TakeMovie alloc] init];
@@ -303,6 +338,8 @@ static NSError *TakeError(NSString *description)
         MovieRecorderSettings *own = [settings copy];
         own.width = (NSInteger)assembledSize.width;
         own.height = (NSInteger)assembledSize.height;
+        own.recordsSound = assembledSoundIndex != NSNotFound;
+        assembledMovie.hasSound = own.recordsSound;
         __weak TakeMovie *weakMovie = assembledMovie;
         assembledMovie.recorder.failureHandler = ^(NSError *failure) {
             weakMovie.error = failure;
@@ -339,6 +376,8 @@ static NSError *TakeError(NSString *description)
         id size = index < sizes.count ? sizes[index] : [NSNull null];
         own.width = [size isKindOfClass:[NSValue class]] ? (NSInteger)[size sizeValue].width : 0;
         own.height = [size isKindOfClass:[NSValue class]] ? (NSInteger)[size sizeValue].height : 0;
+        own.recordsSound = [soundSources containsIndex:index];
+        movie.hasSound = own.recordsSound;
 
         __weak TakeMovie *weakMovie = movie;
         movie.recorder.failureHandler = ^(NSError *failure) {
@@ -370,6 +409,7 @@ static NSError *TakeError(NSString *description)
     {
         _movies = [movies copy];
         _assembledMovie = assembledMovie;
+        _assembledSoundIndex = assembledSoundIndex;
         _recording = YES;
     }
     return YES;
@@ -410,6 +450,32 @@ static NSError *TakeError(NSString *description)
         movie = _recording ? _assembledMovie : nil;
     }
     [movie.recorder appendTexture:texture flipped:NO atTime:time];
+}
+
+- (void)appendSound:(SourceSound *)sound fromSourceAtIndex:(NSUInteger)index atTime:(NSTimeInterval)time
+{
+    NSArray<TakeMovie *> *movies;
+    TakeMovie *assembledMovie;
+    NSUInteger assembledSoundIndex;
+    @synchronized (self)
+    {
+        if (!_recording)
+        {
+            return;
+        }
+        movies = _movies;
+        assembledMovie = _assembledMovie;
+        assembledSoundIndex = _assembledSoundIndex;
+    }
+    // The same sound may go to both: it does not change
+    if (index < movies.count && movies[index].hasSound)
+    {
+        [movies[index].recorder appendSound:sound atTime:time];
+    }
+    if (index == assembledSoundIndex && assembledMovie)
+    {
+        [assembledMovie.recorder appendSound:sound atTime:time];
+    }
 }
 
 - (void)finishAtTime:(NSTimeInterval)time completionHandler:(void (^)(NSError * _Nullable error))handler
