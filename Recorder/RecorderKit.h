@@ -43,3 +43,5 @@
 #import "NDITextureRing.h"
 #import "NDIDirectory.h"
 #import "CompositeDirectory.h"
+#import "SourceSound.h"
+#import "SoundTimeline.h"
