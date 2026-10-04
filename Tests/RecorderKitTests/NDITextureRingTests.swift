@@ -178,6 +178,7 @@ final class NDITextureRingTests: XCTestCase {
         XCTAssertNil(texture(bytes, 20000, 1), "wider than a texture can be")
         XCTAssertNil(texture(bytes, 1, 20000), "taller than a texture can be")
         XCTAssertNil(texture(bytes, 64, 2, bytesPerRow: 64 * 4 - 1), "rows shorter than the picture")
+        XCTAssertNil(texture(bytes, 64, 2, bytesPerRow: 64 * 4 + 2), "rows Metal cannot read: not a multiple of 4 bytes")
         XCTAssertNotNil(texture(bytes, 64, 2), "the same bytes, read right")
     }
 }

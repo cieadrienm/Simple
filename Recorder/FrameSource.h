@@ -56,6 +56,9 @@ typedef NS_ENUM(NSInteger, FrameSourceKind) {
 @property (readonly, copy) NSString *title;
 // YES if the first row of its textures is the bottom of the picture, as it is for Syphon
 @property (readonly) BOOL flipped;
+// What it is: Syphon's or NDI's. A place takes it from what it connected to, not from the list, where a title may
+// be Syphon's and NDI's.
+@property (readonly) FrameSourceKind kind;
 // Called for every frame, on any thread
 @property (copy, nullable) void (^frameHandler)(id<MTLTexture> frame);
 // NO once what it is connected to has gone: it will deliver nothing more. A source which is alive may be silent

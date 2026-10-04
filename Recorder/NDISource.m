@@ -140,19 +140,11 @@ static void NDISourceRun(const NDIlib_v5 *ndi, NDIlib_recv_instance_t receiver, 
             if (stopping)
                 break;
             NDIlib_video_frame_v2_t video = {0};
-            NDIlib_audio_frame_v3_t audio = {0};
-            NDIlib_metadata_frame_t metadata = {0};
-            switch (ndi->recv_capture_v3(receiver, &video, &audio, &metadata, NDISourceCaptureMilliseconds)) {
+            // No audio or metadata frame is asked for, so that the SDK does no audio work: sound is part 4
+            switch (ndi->recv_capture_v3(receiver, &video, NULL, NULL, NDISourceCaptureMilliseconds)) {
                 case NDIlib_frame_type_video:
                     NDISourceDeliver(&video, state, ring, title, &toldFourCC);
                     ndi->recv_free_video_v2(receiver, &video);
-                    break;
-                case NDIlib_frame_type_audio:
-                    // Sound is not recorded yet
-                    ndi->recv_free_audio_v3(receiver, &audio);
-                    break;
-                case NDIlib_frame_type_metadata:
-                    ndi->recv_free_metadata(receiver, &metadata);
                     break;
                 default:
                     // Nothing came, the source changed, or the connection was lost: the SDK connects again by itself
@@ -208,6 +200,11 @@ static void NDISourceDeliver(const NDIlib_video_frame_v2_t *video, NDISourceStat
 {
     // NDI's first row is the top one
     return NO;
+}
+
+- (FrameSourceKind)kind
+{
+    return FrameSourceKindNDI;
 }
 
 - (void (^)(id<MTLTexture>))frameHandler

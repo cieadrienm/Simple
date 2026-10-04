@@ -98,6 +98,7 @@ static const NSTimeInterval kLongestSilenceTimeout = 30.0;
 @property (readwrite) FrameSourceKind kind;
 // Main thread: YES once it has connected, and its kind is known
 @property (assign) BOOL kindKnown;
+- (void)letGoOfSource;
 @end
 
 @implementation RecorderPlace {
@@ -143,6 +144,18 @@ static const NSTimeInterval kLongestSilenceTimeout = 30.0;
     NSUInteger index = _takeIndex;
     os_unfair_lock_unlock(&_lock);
     return index;
+}
+
+// Main thread: stops its source, then forgets its last frame, which is not drawn again: its part of the picture is
+// empty until a frame arrives from a new connection. Its size stays, so that the layout does not jump. In this
+// order, as a source delivers nothing once stop has returned.
+- (void)letGoOfSource
+{
+    [self.source stop];
+    self.source = nil;
+    os_unfair_lock_lock(&_lock);
+    _latestFrame = nil;
+    os_unfair_lock_unlock(&_lock);
 }
 
 - (void)setTakeIndex:(NSUInteger)index
@@ -643,9 +656,14 @@ static NSString *StringFrom(NSArray *arguments)
             // A source which says nothing may have gone without the directory knowing: when an application is
             // killed, Syphon goes on listing its server, beside the one which replaces it when it is relaunched.
             // A source which is alive and silent is left alone: another with its title would be another picture.
-            [place.source stop];
-            place.source = nil;
+            [place letGoOfSource];
             [self connectPlace:place];
+            if (place.source)
+            {
+                // Connected again to something which may be as dead: NDI goes on listing a sender whose machine
+                // has gone for a while. It is asked after twice as long each time, as a silent source is.
+                place.silentChecks++;
+            }
         }
         else
         {
@@ -907,8 +925,7 @@ static Layout *MonitorLayout(Layout *layout, LayoutKind kind, NSArray *sizes, NS
         BOOL there = [available containsObject:place.title];
         if (place.source && !there)
         {
-            [place.source stop];
-            place.source = nil;
+            [place letGoOfSource];
         }
         else if (place.source == nil && there)
         {
@@ -925,16 +942,9 @@ static Layout *MonitorLayout(Layout *layout, LayoutKind kind, NSArray *sizes, NS
     {
         return;
     }
-    // Its kind is that of the source listed with its title: the first directory's, as the source connected to is
-    for (SourceDescription *description in self.availableSources)
-    {
-        if ([description.title isEqualToString:place.title])
-        {
-            place.kind = description.kind;
-            place.kindKnown = YES;
-            break;
-        }
-    }
+    // Its kind is that of the source connected to: Syphon may list the title and have nothing alive with it
+    place.kind = source.kind;
+    place.kindKnown = YES;
     BOOL flipped = source.flipped;
     Take *take = _take;
     __weak RecorderController *weakSelf = self;
@@ -965,8 +975,7 @@ static Layout *MonitorLayout(Layout *layout, LayoutKind kind, NSArray *sizes, NS
     {
         if (![places containsObject:place])
         {
-            [place.source stop];
-            place.source = nil;
+            [place letGoOfSource];
         }
     }
     self.places = places;

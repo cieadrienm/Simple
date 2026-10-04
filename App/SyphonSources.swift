@@ -37,6 +37,7 @@ final class SyphonSource: NSObject, FrameSource {
     let title: String
     /// Syphon frames have their first row at the bottom of the picture
     let flipped = true
+    let kind = FrameSourceKind.syphon
 
     private var client: SyphonMetalClient?
     private let serverDescription: [String: Any]

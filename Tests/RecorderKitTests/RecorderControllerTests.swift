@@ -7,6 +7,7 @@ import RecorderKit
 final class FakeSource: NSObject, FrameSource {
     let title: String
     var flipped = false
+    var kind = FrameSourceKind.syphon
     var frameHandler: ((MTLTexture) -> Void)?
     private(set) var stopped = false
     /// Which of the directory's entries it is connected to
@@ -37,6 +38,9 @@ final class FakeDirectory: NSObject, SourceDirectory {
     var flippedTitles = Set<String>()
     /// What its sources are: Syphon's, or NDI's
     let kind: FrameSourceKind
+    /// As NDI's finder, which goes on listing a sender whose machine has gone for a while: a dead entry is still
+    /// connected to, and only its source's `isAlive` tells
+    var connectsToDead = false
 
     init(_ titles: [String], kind: FrameSourceKind = .syphon) {
         self.titles = titles
@@ -49,10 +53,11 @@ final class FakeDirectory: NSObject, SourceDirectory {
 
     func connectToSource(withTitle title: String, device: MTLDevice) -> FrameSource? {
         // The first with the title which is alive
-        guard let entry = titles.indices.first(where: { titles[$0] == title && !dead.contains($0) }) else { return nil }
+        guard let entry = titles.indices.first(where: { titles[$0] == title && (connectsToDead || !dead.contains($0)) }) else { return nil }
         let source = FakeSource(title: title)
         source.entry = entry
         source.directory = self
+        source.kind = kind
         source.flipped = flippedTitles.contains(title)
         connections.append(source)
         return source
@@ -1015,6 +1020,34 @@ final class RecorderControllerTests: XCTestCase {
         assertColour(pixel(32, 24), [0, 0, 0, 255], "the place of the source which has gone is black once it is known to be gone")
     }
 
+    func testASourceFoundDeadButStillListedLeavesItsPlaceBlack() throws {
+        // As NDI's finder does, the directory goes on connecting to a source which has gone
+        directory.connectsToDead = true
+        tick([a, b])
+        send("/output", "assembled")
+        send("/name", "show")
+        deliverFrames(for: 0.1, from: [(a, solid(64, 48, red)), (b, solid(64, 48, green))])
+        XCTAssertTrue(controller.start())
+        deliverFrames(for: 0.3, from: [(a, solid(64, 48, red)), (b, solid(64, 48, green))])
+        settle()
+        let connectionsBefore = directory.connections.count
+        // B's machine has gone: only A delivers, and B is connected to again and again, each time found dead
+        directory.kill(entry: 3)
+        deliverFrames(for: 8.5, from: [(a, solid(64, 48, red))])
+        XCTAssertNil(controller.places[1].latestFrame, "the last frame of a source found dead is not drawn again")
+        XCTAssertEqual(controller.places[1].width, 64, "its place keeps its size")
+        XCTAssertEqual(controller.places[1].height, 48)
+        XCTAssertEqual(controller.assembledLayout.size, size(128, 48), "the picture does not jump")
+        // Found dead after 2 s, then 4 s later, then 8: not every 2 s
+        XCTAssertLessThanOrEqual(directory.connections.count - connectionsBefore, 2, "reconnections are spaced out")
+        stopAndWait()
+        XCTAssertEqual(controller.error, "")
+
+        let pixel = try picture(folder.appendingPathComponent("show.mov"), last: true)
+        assertColour(pixel(32, 24), red)
+        assertColour(pixel(96, 24), [0, 0, 0, 255], "the place of the source found dead is black, not its last picture")
+    }
+
     func testChangingTheLayoutWhileRecordingAppliesToTheNextTake() throws {
         tick([a, b])
         send("/output", "assembled")
@@ -1170,6 +1203,15 @@ final class RecorderControllerTests: XCTestCase {
         let next = RecorderController(device: device, directory: CompositeDirectory(directories: [FakeDirectory([a])]), defaults: defaults)
         XCTAssertEqual(next.places.map(\.title), [a, camera])
         XCTAssertEqual(next.places.map(\.kindName), ["syphon", ""])
+    }
+
+    func testAPlaceTakesTheKindOfWhatItIsConnectedTo() throws {
+        // Syphon lists the title, but its entry is dead: the NDI source with the title is connected to
+        useSyphonAndNDI(syphon: [camera], ndi: [camera])
+        directory.kill(entry: 0)
+        tick([camera])
+        XCTAssertNotNil(ndiDirectory?.source(camera))
+        XCTAssertEqual(controller.places[0].kindName, "ndi")
     }
 
     func testNDIOffIsAStateNotAnError() throws {

@@ -64,7 +64,9 @@ static const NSUInteger kLargestSide = 16384;
                        bytesPerRow:(NSUInteger)bytesPerRow
                           hasAlpha:(BOOL)hasAlpha
 {
-    if (bytes == NULL || width == 0 || height == 0 || width > kLargestSide || height > kLargestSide || bytesPerRow < width * 4)
+    // Metal reads rows which start on a multiple of 4 bytes only
+    if (bytes == NULL || width == 0 || height == 0 || width > kLargestSide || height > kLargestSide || bytesPerRow < width * 4
+        || bytesPerRow % 4 != 0)
     {
         return nil;
     }

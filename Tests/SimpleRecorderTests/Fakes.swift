@@ -6,6 +6,7 @@ import RecorderKit
 final class FakeSource: NSObject, FrameSource {
     let title: String
     var flipped = false
+    var kind = FrameSourceKind.syphon
     var frameHandler: ((MTLTexture) -> Void)?
     private(set) var stopped = false
     /// Which of the directory's entries it is connected to
@@ -55,6 +56,7 @@ final class FakeDirectory: NSObject, SourceDirectory {
         let source = FakeSource(title: title)
         source.entry = entry
         source.directory = self
+        source.kind = ndiTitles.contains(title) ? .NDI : .syphon
         connections.append(source)
         return source
     }
