@@ -1,0 +1,5 @@
+// Processing.NDI.Lib.h includes the others; they cannot be compiled on their own
+module NDIHeaders {
+    header "Processing.NDI.Lib.h"
+    export *
+}

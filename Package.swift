@@ -14,10 +14,14 @@ let package = Package(
     ],
     targets: [
         .binaryTarget(name: "Syphon", path: "build/Syphon.xcframework"),
-        .target(name: "RecorderKit", path: "Recorder", publicHeadersPath: "."),
+        // The NDI SDK's headers: libndi.dylib itself is loaded at run time (NDILibrary), never linked
+        .target(name: "NDIHeaders", path: "ThirdParty/NDI", exclude: ["README.md"], publicHeadersPath: "include"),
+        .target(name: "RecorderKit", dependencies: ["NDIHeaders"], path: "Recorder", publicHeadersPath: "."),
         .executableTarget(name: "SimpleRecorder", dependencies: ["RecorderKit", "Syphon"], path: "App"),
         .executableTarget(name: "simple-recorder-mcp", path: "MCP"),
-        .testTarget(name: "RecorderKitTests", dependencies: ["RecorderKit"], path: "Tests/RecorderKitTests"),
-        .testTarget(name: "SimpleRecorderTests", dependencies: ["SimpleRecorder", "RecorderKit", "Syphon"], path: "Tests/SimpleRecorderTests"),
+        // An NDI sender for the tests, made through NDILibrary
+        .target(name: "NDITestSupport", dependencies: ["RecorderKit", "NDIHeaders"], path: "Tests/NDITestSupport", publicHeadersPath: "."),
+        .testTarget(name: "RecorderKitTests", dependencies: ["RecorderKit", "NDITestSupport"], path: "Tests/RecorderKitTests"),
+        .testTarget(name: "SimpleRecorderTests", dependencies: ["SimpleRecorder", "RecorderKit", "Syphon", "NDITestSupport"], path: "Tests/SimpleRecorderTests"),
     ]
 )

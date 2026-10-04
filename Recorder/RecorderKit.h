@@ -39,3 +39,4 @@
 #import "Take.h"
 #import "FrameSource.h"
 #import "RecorderController.h"
+#import "NDILibrary.h"
