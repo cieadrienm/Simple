@@ -48,8 +48,14 @@ static const double kAssumedFramesPerSecond = 60.0;
 static const double kSoundRate = 48000.0;
 // Seconds of sound which may wait for the encoder: beyond, the oldest is left out
 static const NSTimeInterval kMaximumSoundWaiting = 2.0;
-// How long finishing waits for the encoder to take the sound which waits
+// The same while silence is owed for a gap: the encoder takes about 340 s of AAC silence a second, so an hour's gap
+// keeps the sound which comes back waiting for some ten seconds, which must not be left out
+static const NSTimeInterval kMaximumSoundWaitingBehindSilence = 30.0;
+// How long finishing waits for an encoder which takes nothing more
 static const int kSoundFinishWaitMilliseconds = 1000;
+// The most silence given to the encoder at once, in samples of the sound track: a long gap is given a second at a
+// time, so that it never holds the pictures back
+static const int64_t kLongestSilenceWritten = 48000;
 
 static NSString * const kShaderSource = @"\
 #include <metal_stdlib>\n\
@@ -144,8 +150,9 @@ static NSError *RecorderError(NSString *description)
     // The rate of the sound being placed, and the converter to 48 kHz if it is another
     double _soundRate;
     AVAudioConverter *_converter;
-    // Placed and at 48 kHz, waiting for the encoder
-    NSMutableArray<SourceSound *> *_placedSound;
+    // Placed, waiting for the encoder: sound at 48 kHz (SourceSound), and silence still owed (NSNumber, a count of
+    // 48 kHz samples: it is made only as it is written). Holds what one piece of sound gave at most.
+    NSMutableArray *_placedSound;
     // The sound track's next sample
     int64_t _soundPosition;
 
@@ -166,6 +173,8 @@ static NSError *RecorderError(NSString *description)
     NSMutableArray<WaitingSound *> *_waitingSound;
     NSTimeInterval _soundWaiting;
     BOOL _soundWriteScheduled;
+    // Silence is owed: it is being given to the encoder, a second at a time
+    BOOL _silenceOwed;
     NSTimeInterval _soundWritten;
     NSTimeInterval _soundLeftOut;
 }
@@ -792,12 +801,23 @@ static NSError *RecorderError(NSString *description)
     _soundWaiting += sound.duration;
     // The encoder is behind, or the movie is not made yet: the oldest sound is left out, and the timeline puts
     // silence in its place when sound is written again. (A millionth of a second for the sums of durations.)
-    while (_waitingSound.count > 0 && _soundWaiting > kMaximumSoundWaiting + 1e-6)
+    // The bound is on sound: silence owed is only a count, but the sound behind it may wait longer.
+    NSTimeInterval maximum = (_silenceOwed ? kMaximumSoundWaitingBehindSilence : kMaximumSoundWaiting) + 1e-6;
+    while (_waitingSound.count > 1 && _soundWaiting > maximum)
     {
         NSTimeInterval duration = _waitingSound[0].sound.duration;
         [_waitingSound removeObjectAtIndex:0];
         _soundWaiting -= duration;
         _soundLeftOut += duration;
+    }
+    if (_soundWaiting > maximum)
+    {
+        // The newest piece alone is longer: its last seconds are kept. It still arrived when its last sample was made.
+        SourceSound *longest = _waitingSound[0].sound;
+        NSUInteger cut = longest.frameCount - (NSUInteger)llround((maximum - 1e-6) * longest.sampleRate);
+        _waitingSound[0].sound = [longest soundFromFrame:cut];
+        _soundLeftOut += longest.duration - _waitingSound[0].sound.duration;
+        _soundWaiting = _waitingSound[0].sound.duration;
     }
     BOOL schedule = !_soundWriteScheduled;
     _soundWriteScheduled = YES;
@@ -805,14 +825,25 @@ static NSError *RecorderError(NSString *description)
 
     if (schedule)
     {
-        dispatch_async(_queue, ^{
-            // Cleared first: sound which arrives from now on schedules another
-            os_unfair_lock_lock(&self->_lock);
-            self->_soundWriteScheduled = NO;
-            os_unfair_lock_unlock(&self->_lock);
-            [self writeWaitingSound];
-        });
+        [self scheduleSoundWrite];
     }
+}
+
+// The caller has set _soundWriteScheduled
+- (void)scheduleSoundWrite
+{
+    [self scheduleSoundWriteAfter:0];
+}
+
+- (void)scheduleSoundWriteAfter:(int64_t)nanoseconds
+{
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, nanoseconds), _queue, ^{
+        // Cleared first: sound which arrives from now on schedules another
+        os_unfair_lock_lock(&self->_lock);
+        self->_soundWriteScheduled = NO;
+        os_unfair_lock_unlock(&self->_lock);
+        [self writeWaitingSound];
+    });
 }
 
 // On the recorder's queue. Gives the encoder the sound which waits, as much of it as it takes now. Never waits for
@@ -838,21 +869,53 @@ static NSError *RecorderError(NSString *description)
         }
         _soundTimeline = [[SoundTimeline alloc] initWithOrigin:origin];
     }
+    // Each call gives at most a second of silence, so that it takes little time whatever the gap
+    int64_t silenceLeft = kLongestSilenceWritten;
     while (YES)
     {
         while (_placedSound.count > 0 && _audioInput.readyForMoreMediaData)
         {
-            if (![self appendPlacedSound:_placedSound[0]])
+            id placed = _placedSound[0];
+            if ([placed isKindOfClass:[NSNumber class]])
             {
-                // The writer failed: the pictures report it
-                return;
+                int64_t owed = [placed longLongValue];
+                int64_t frames = MIN(owed, silenceLeft);
+                if (frames == 0)
+                {
+                    break;
+                }
+                if (![self appendSamples:NULL frameCount:(NSUInteger)frames])
+                {
+                    return;
+                }
+                silenceLeft -= frames;
+                if (owed > frames)
+                {
+                    _placedSound[0] = @(owed - frames);
+                }
+                else
+                {
+                    [_placedSound removeObjectAtIndex:0];
+                }
             }
-            [_placedSound removeObjectAtIndex:0];
+            else
+            {
+                SourceSound *sound = placed;
+                if (![self appendSamples:sound.samples frameCount:sound.frameCount])
+                {
+                    // The writer failed: the pictures report it
+                    return;
+                }
+                [_placedSound removeObjectAtIndex:0];
+            }
         }
-        if (_placedSound.count > 0 || !_audioInput.readyForMoreMediaData)
+        if ([self placedSoundIncludesSound])
         {
-            return;
+            // It waits for the encoder, or behind silence still owed, and what follows waits in the list
+            break;
         }
+        // Sound is placed even while silence is owed: placing costs little, and the sound which comes back after a
+        // gap must not wait in the list, where it would be left out, while the silence is written
         os_unfair_lock_lock(&_lock);
         WaitingSound *next = _waitingSound.firstObject;
         if (next)
@@ -863,40 +926,81 @@ static NSError *RecorderError(NSString *description)
         os_unfair_lock_unlock(&_lock);
         if (next == nil)
         {
-            return;
+            break;
         }
         [self placeSound:next.sound arrivedAtTime:next.time];
     }
+
+    BOOL owed = NO;
+    for (id placed in _placedSound)
+    {
+        owed = owed || [placed isKindOfClass:[NSNumber class]];
+    }
+    os_unfair_lock_lock(&_lock);
+    _silenceOwed = owed;
+    BOOL pending = _placedSound.count > 0 || _waitingSound.count > 0;
+    BOOL schedule = pending && !_soundWriteScheduled;
+    _soundWriteScheduled = _soundWriteScheduled || pending;
+    os_unfair_lock_unlock(&_lock);
+    if (schedule)
+    {
+        // The rest is given in later calls, with pictures between them, whether or not more sound or pictures come:
+        // at once if the encoder takes more (silence is given a second at a time), a moment later if it is busy
+        [self scheduleSoundWriteAfter:_audioInput.readyForMoreMediaData ? 0 : 2 * NSEC_PER_MSEC];
+    }
+}
+
+- (BOOL)placedSoundIncludesSound
+{
+    for (id placed in _placedSound)
+    {
+        if ([placed isKindOfClass:[SourceSound class]])
+        {
+            return YES;
+        }
+    }
+    return NO;
 }
 
 // On the recorder's queue. Puts a piece on the movie's clock, at 48 kHz, among the sound placed.
 - (void)placeSound:(SourceSound *)sound arrivedAtTime:(NSTimeInterval)time
 {
-    if (sound.sampleRate != _soundRate)
+    NSTimeInterval silenceBefore = _soundTimeline.silenceAdded;
+    NSArray<SourceSound *> *pieces = [_soundTimeline piecesForSound:sound arrivedAtTime:time];
+    if (pieces.count == 0)
+    {
+        // Before the movie, early, or at a time which is wrong: nothing changes
+        return;
+    }
+    NSTimeInterval silence = _soundTimeline.silenceAdded - silenceBefore;
+    if (sound.sampleRate != _soundRate || silence > 0.0)
+    {
+        // What the converter holds back goes before the silence, or ends the run of the last rate
+        [self endConversion];
+    }
+    _soundRate = sound.sampleRate;
+    if (_converter == nil && _soundRate != kSoundRate)
     {
         // The encoder converts only from the first rate it is given: we convert, so that a source which changes
         // rate keeps its pitch
-        [self endSoundRun];
-        _soundRate = sound.sampleRate;
-        if (_soundRate != kSoundRate)
-        {
-            AVAudioFormat *from = [[AVAudioFormat alloc] initWithCommonFormat:AVAudioPCMFormatFloat32 sampleRate:_soundRate channels:2 interleaved:YES];
-            AVAudioFormat *to = [[AVAudioFormat alloc] initWithCommonFormat:AVAudioPCMFormatFloat32 sampleRate:kSoundRate channels:2 interleaved:YES];
-            _converter = [[AVAudioConverter alloc] initFromFormat:from toFormat:to];
-        }
+        AVAudioFormat *from = [[AVAudioFormat alloc] initWithCommonFormat:AVAudioPCMFormatFloat32 sampleRate:_soundRate channels:2 interleaved:YES];
+        AVAudioFormat *to = [[AVAudioFormat alloc] initWithCommonFormat:AVAudioPCMFormatFloat32 sampleRate:kSoundRate channels:2 interleaved:YES];
+        _converter = [[AVAudioConverter alloc] initFromFormat:from toFormat:to];
     }
-    for (SourceSound *piece in [_soundTimeline piecesForSound:sound arrivedAtTime:time])
+    if (silence > 0.0)
     {
-        SourceSound *placed = _converter ? [self convertSound:piece] : piece;
-        if (placed)
-        {
-            [_placedSound addObject:placed];
-        }
+        // The timeline gives silence then the piece: the silence is owed as a count, made only as it is written
+        [_placedSound addObject:@(llround(silence * kSoundRate))];
+    }
+    SourceSound *placed = _converter ? [self convertSound:pieces.lastObject] : pieces.lastObject;
+    if (placed)
+    {
+        [_placedSound addObject:placed];
     }
 }
 
-// On the recorder's queue. The end of a run of one rate: what the converter holds back of it is placed.
-- (void)endSoundRun
+// On the recorder's queue. What the converter holds back of the sound so far is placed, and it is let go.
+- (void)endConversion
 {
     if (_converter)
     {
@@ -907,7 +1011,6 @@ static NSError *RecorderError(NSString *description)
         }
         _converter = nil;
     }
-    _soundRate = 0.0;
 }
 
 // A piece at 48 kHz, or for nil the end of the run. The converter keeps the timing (its prime method is "normal"),
@@ -955,21 +1058,21 @@ static NSError *RecorderError(NSString *description)
     return [SourceSound soundWithInterleavedStereoSamples:samples.bytes frameCount:samples.length / (2 * sizeof(float)) sampleRate:kSoundRate];
 }
 
-// On the recorder's queue. NO if the encoder refused it.
-- (BOOL)appendPlacedSound:(SourceSound *)sound
+// On the recorder's queue. Samples at 48 kHz, or silence for NULL. NO if the encoder refused them.
+- (BOOL)appendSamples:(nullable const float *)samples frameCount:(NSUInteger)frameCount
 {
-    size_t length = sound.frameCount * 2 * sizeof(float);
+    size_t length = frameCount * 2 * sizeof(float);
     CMBlockBufferRef block = NULL;
     CMSampleBufferRef sample = NULL;
     OSStatus status = CMBlockBufferCreateWithMemoryBlock(kCFAllocatorDefault, NULL, length, kCFAllocatorDefault, NULL, 0, length,
                                                          kCMBlockBufferAssureMemoryNowFlag, &block);
     if (status == noErr)
     {
-        status = CMBlockBufferReplaceDataBytes(sound.samples, block, 0, length);
+        status = samples ? CMBlockBufferReplaceDataBytes(samples, block, 0, length) : CMBlockBufferFillDataBytes(0, block, 0, length);
     }
     if (status == noErr)
     {
-        status = CMAudioSampleBufferCreateReadyWithPacketDescriptions(kCFAllocatorDefault, block, _soundFormat, (CMItemCount)sound.frameCount,
+        status = CMAudioSampleBufferCreateReadyWithPacketDescriptions(kCFAllocatorDefault, block, _soundFormat, (CMItemCount)frameCount,
                                                                       CMTimeMake(_soundPosition, (int32_t)kSoundRate), NULL, &sample);
     }
     BOOL appended = status == noErr && [_audioInput appendSampleBuffer:sample];
@@ -977,9 +1080,9 @@ static NSError *RecorderError(NSString *description)
     if (block) CFRelease(block);
     if (appended)
     {
-        _soundPosition += sound.frameCount;
+        _soundPosition += frameCount;
         os_unfair_lock_lock(&_lock);
-        _soundWritten += sound.duration;
+        _soundWritten += frameCount / kSoundRate;
         os_unfair_lock_unlock(&_lock);
     }
     return appended;
@@ -994,15 +1097,17 @@ static NSError *RecorderError(NSString *description)
         return;
     }
     BOOL ended = NO;
-    for (int waited = 0; _writer.status == AVAssetWriterStatusWriting; waited++)
+    int waited = 0;
+    while (_writer.status == AVAssetWriterStatusWriting)
     {
+        int64_t position = _soundPosition;
         [self writeWaitingSound];
         os_unfair_lock_lock(&_lock);
         BOOL waiting = _waitingSound.count > 0;
         os_unfair_lock_unlock(&_lock);
         if (!waiting && !ended && _soundTimeline)
         {
-            [self endSoundRun];
+            [self endConversion];
             ended = YES;
             [self writeWaitingSound];
         }
@@ -1010,16 +1115,26 @@ static NSError *RecorderError(NSString *description)
         {
             return;
         }
-        if (waited >= kSoundFinishWaitMilliseconds)
+        if (_soundPosition != position)
+        {
+            // The encoder took some (silence owed is given a second at a time): no need to wait
+            waited = 0;
+            continue;
+        }
+        if (waited++ >= kSoundFinishWaitMilliseconds)
         {
             break;
         }
         usleep(1000);
     }
+    // Only sound counts as left out: silence still owed is not
     NSTimeInterval leftOut = 0.0;
-    for (SourceSound *sound in _placedSound)
+    for (id placed in _placedSound)
     {
-        leftOut += sound.duration;
+        if ([placed isKindOfClass:[SourceSound class]])
+        {
+            leftOut += ((SourceSound *)placed).duration;
+        }
     }
     os_unfair_lock_lock(&_lock);
     _soundLeftOut += leftOut + _soundWaiting;
@@ -1038,6 +1153,7 @@ static NSError *RecorderError(NSString *description)
     os_unfair_lock_lock(&_lock);
     [_waitingSound removeAllObjects];
     _soundWaiting = 0.0;
+    _silenceOwed = NO;
     os_unfair_lock_unlock(&_lock);
 }
 

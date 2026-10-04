@@ -30,9 +30,10 @@ struct SoundInfo {
     /// The frame at a time of the movie, within the samples
     func frame(at time: Double) -> Int { min(max(Int(((time - start) * sampleRate).rounded()), 0), frameCount) }
 
-    /// When the sound which is not silence begins: the first sample louder than the threshold. nil if there is none.
-    func soundStart(threshold: Float = 0.01) -> Double? {
-        (0..<frameCount).first { abs(sample($0)) > threshold }.map { time(ofFrame: $0) }
+    /// When the sound which is not silence begins, from a time on: the first sample louder than the threshold. nil if
+    /// there is none.
+    func soundStart(after: Double = 0, threshold: Float = 0.01) -> Double? {
+        (frame(at: after)..<frameCount).first { abs(sample($0)) > threshold }.map { time(ofFrame: $0) }
     }
 
     /// The frequency of a tone between two times, by counting its zero crossings.

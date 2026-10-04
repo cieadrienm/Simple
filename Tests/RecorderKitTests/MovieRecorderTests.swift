@@ -723,6 +723,80 @@ final class MovieRecorderTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: url.path))
     }
 
+    func testSoundWhichComesBackAfterAGapIsInItsPlace() throws {
+        let recorder = MovieRecorder(device: device)
+        let url = try recordWithSound(recorder, name: "gap", settings: soundSettings(), frames: (100, 106),
+                                      sound: [SoundFeed(rate: 44100, from: 100, to: 101), SoundFeed(rate: 44100, from: 105, to: 106)],
+                                      finish: 106)
+
+        let sound = try SoundInfo(url)
+        XCTAssertEqual(sound.frequency(from: 0.1, to: 0.9), 1000, accuracy: 5)
+        XCTAssertLessThan(sound.peak(from: 1.05, to: 4.95), 0.01, "silence fills the gap")
+        XCTAssertEqual(try XCTUnwrap(sound.soundStart(after: 2)), 5, accuracy: 0.03)
+        XCTAssertEqual(sound.frequency(from: 5.1, to: 5.9), 1000, accuracy: 5)
+        XCTAssertEqual(sound.duration, 6, accuracy: 0.03)
+        XCTAssertEqual(recorder.soundLeftOut, 0)
+    }
+
+    func testALongGapDoesNotHoldThePicturesBack() throws {
+        // Ten minutes without sound: the silence which fills them must not be made all at once on the queue which
+        // writes the pictures, and the sound which comes back must not wait behind it until it is left out
+        let recorder = MovieRecorder(device: device)
+        let url = folder.appendingPathComponent("longgap.mov")
+        try recorder.startWriting(to: url, settings: soundSettings(width: 320, height: 180), startTime: 100)
+        let texture = makeTexture(width: 320, height: 180)
+        let before = SoundFeed(rate: 44100, from: 100, to: 101), after = SoundFeed(rate: 44100, from: 701, to: 702)
+        var longest = 0.0
+        func timed(_ work: () -> Void) {
+            let start = Date()
+            work()
+            longest = max(longest, Date().timeIntervalSince(start))
+        }
+        for (feed, from) in [(before, 100.0), (after, 701.0)] {
+            for index in 0..<30 {
+                let time = from + Double(index) / 30
+                timed { feed.give(to: recorder, upTo: time) }
+                timed { append(texture, to: recorder, at: time) }
+            }
+            timed { feed.give(to: recorder, upTo: from + 1) }
+        }
+        // The silence is given to the encoder a second at a time in the background, without pictures to prompt it.
+        // (The AAC encoder takes about 1.8 s for ten minutes of silence, measured with a bare writer.)
+        let deadline = Date().addingTimeInterval(30)
+        while recorder.soundWritten < 601.9 && Date() < deadline { usleep(10_000) }
+        XCTAssertEqual(recorder.soundWritten, 602, accuracy: 0.05, "the silence and the sound after it are written before the end")
+        let start = Date()
+        XCTAssertNil(finish(recorder, at: 702))
+        let finishing = Date().timeIntervalSince(start)
+
+        XCTAssertLessThan(longest, 0.25, "no sound or picture waited long for the queue")
+        XCTAssertLessThan(finishing, 0.5)
+        XCTAssertEqual(recorder.framesWritten, 60)
+        XCTAssertEqual(recorder.framesDropped, 0)
+        XCTAssertEqual(recorder.soundLeftOut, 0)
+        XCTAssertEqual(recorder.soundWritten, 602, accuracy: 0.05)
+        let sound = try SoundInfo(url)
+        XCTAssertEqual(try XCTUnwrap(sound.soundStart(after: 2)), 601, accuracy: 0.03)
+        XCTAssertEqual(sound.frequency(from: 601.1, to: 601.9), 1000, accuracy: 5)
+    }
+
+    func testAPieceLongerThanWhatMayWaitIsCutRatherThanLost() throws {
+        let recorder = MovieRecorder(device: device)
+        let url = folder.appendingPathComponent("longpiece.mov")
+        try recorder.startWriting(to: url, settings: soundSettings(width: 320, height: 180), startTime: 100)
+        let texture = makeTexture(width: 320, height: 180)
+        for index in 0..<90 { append(texture, to: recorder, at: 100 + Double(index) / 30) }
+        // Three seconds in one piece, which arrives when its last sample is made
+        let feed = SoundFeed(from: 100, to: 103, pieceSeconds: 3) { Float(0.5 * sin(2 * .pi * 1000 * Double($0) / 48000)) }
+        feed.give(to: recorder, upTo: 103)
+        XCTAssertNil(finish(recorder, at: 103))
+
+        XCTAssertEqual(recorder.soundLeftOut, 1, accuracy: 0.01, "its first second is left out")
+        let sound = try SoundInfo(url)
+        XCTAssertEqual(try XCTUnwrap(sound.soundStart()), 1, accuracy: 0.03, "the rest is in its place")
+        XCTAssertEqual(sound.frequency(from: 1.1, to: 2.9), 1000, accuracy: 5)
+    }
+
     func testSoundAfterFinishIsIgnored() throws {
         let recorder = MovieRecorder(device: device)
         try recordWithSound(recorder, name: "after", settings: soundSettings(), frames: (100, 101),
