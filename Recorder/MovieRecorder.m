@@ -173,8 +173,9 @@ static NSError *RecorderError(NSString *description)
     NSMutableArray<WaitingSound *> *_waitingSound;
     NSTimeInterval _soundWaiting;
     BOOL _soundWriteScheduled;
-    // Silence is owed: it is being given to the encoder, a second at a time
-    BOOL _silenceOwed;
+    // Silence is owed for a gap, or more than kMaximumSoundWaiting of sound still waits behind it: the sound which
+    // waits may reach kMaximumSoundWaitingBehindSilence
+    BOOL _soundBehindGap;
     NSTimeInterval _soundWritten;
     NSTimeInterval _soundLeftOut;
 }
@@ -787,6 +788,25 @@ static NSError *RecorderError(NSString *description)
 
 - (void)appendSound:(SourceSound *)sound atTime:(NSTimeInterval)time
 {
+    // The bound is on sound: silence owed is only a count, but the sound which waits behind a gap may wait longer,
+    // until it is back under the usual bound. (A millionth of a second for the sums of durations.)
+    os_unfair_lock_lock(&_lock);
+    BOOL wanted = _recording && _recordsSound;
+    NSTimeInterval maximum = _soundBehindGap ? kMaximumSoundWaitingBehindSilence : kMaximumSoundWaiting;
+    os_unfair_lock_unlock(&_lock);
+    if (!wanted)
+    {
+        return;
+    }
+    NSTimeInterval cutOff = 0.0;
+    if (sound.duration > maximum + 1e-6)
+    {
+        // Longer than may wait: its last seconds are kept. It still arrived when its last sample was made. (Cut
+        // here, as it copies, rather than while holding the lock which the frames take.)
+        SourceSound *kept = [sound soundFromFrame:sound.frameCount - (NSUInteger)llround(maximum * sound.sampleRate)];
+        cutOff = sound.duration - kept.duration;
+        sound = kept;
+    }
     WaitingSound *waiting = [[WaitingSound alloc] init];
     waiting.sound = sound;
     waiting.time = time;
@@ -799,25 +819,16 @@ static NSError *RecorderError(NSString *description)
     }
     [_waitingSound addObject:waiting];
     _soundWaiting += sound.duration;
+    _soundLeftOut += cutOff;
     // The encoder is behind, or the movie is not made yet: the oldest sound is left out, and the timeline puts
-    // silence in its place when sound is written again. (A millionth of a second for the sums of durations.)
-    // The bound is on sound: silence owed is only a count, but the sound behind it may wait longer.
-    NSTimeInterval maximum = (_silenceOwed ? kMaximumSoundWaitingBehindSilence : kMaximumSoundWaiting) + 1e-6;
+    // silence in its place when sound is written again. The newest piece is always kept.
+    maximum = (_soundBehindGap ? kMaximumSoundWaitingBehindSilence : kMaximumSoundWaiting) + 1e-6;
     while (_waitingSound.count > 1 && _soundWaiting > maximum)
     {
         NSTimeInterval duration = _waitingSound[0].sound.duration;
         [_waitingSound removeObjectAtIndex:0];
         _soundWaiting -= duration;
         _soundLeftOut += duration;
-    }
-    if (_soundWaiting > maximum)
-    {
-        // The newest piece alone is longer: its last seconds are kept. It still arrived when its last sample was made.
-        SourceSound *longest = _waitingSound[0].sound;
-        NSUInteger cut = longest.frameCount - (NSUInteger)llround((maximum - 1e-6) * longest.sampleRate);
-        _waitingSound[0].sound = [longest soundFromFrame:cut];
-        _soundLeftOut += longest.duration - _waitingSound[0].sound.duration;
-        _soundWaiting = _waitingSound[0].sound.duration;
     }
     BOOL schedule = !_soundWriteScheduled;
     _soundWriteScheduled = YES;
@@ -937,7 +948,7 @@ static NSError *RecorderError(NSString *description)
         owed = owed || [placed isKindOfClass:[NSNumber class]];
     }
     os_unfair_lock_lock(&_lock);
-    _silenceOwed = owed;
+    _soundBehindGap = owed || (_soundBehindGap && _soundWaiting > kMaximumSoundWaiting + 1e-6);
     BOOL pending = _placedSound.count > 0 || _waitingSound.count > 0;
     BOOL schedule = pending && !_soundWriteScheduled;
     _soundWriteScheduled = _soundWriteScheduled || pending;
@@ -1153,7 +1164,7 @@ static NSError *RecorderError(NSString *description)
     os_unfair_lock_lock(&_lock);
     [_waitingSound removeAllObjects];
     _soundWaiting = 0.0;
-    _silenceOwed = NO;
+    _soundBehindGap = NO;
     os_unfair_lock_unlock(&_lock);
 }
 

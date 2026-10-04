@@ -68,7 +68,9 @@ extern NSString * const MovieRecorderErrorDomain;
 
  Sound, if the movie records it, is placed on the movie's clock by a SoundTimeline and converted to 48 kHz. It never
  holds pictures back: while the encoder cannot take it, it waits, two seconds of it at most, and beyond that the
- oldest is left out and silence takes its place. A movie whose sound never came has no sound track.
+ oldest is left out and silence takes its place. After a gap, while the silence which fills it is given to the encoder
+ (a second at a time), the sound which came back may wait up to thirty seconds, until it is back under two. A movie
+ whose sound never came has no sound track.
  */
 @interface MovieRecorder : NSObject
 - (instancetype)initWithDevice:(id<MTLDevice>)device;

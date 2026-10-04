@@ -780,6 +780,49 @@ final class MovieRecorderTests: XCTestCase {
         XCTAssertEqual(sound.frequency(from: 601.1, to: 601.9), 1000, accuracy: 5)
     }
 
+    func testSoundWhichWaitsBehindALongGapIsNotLeftOutOnceTheSilenceIsWritten() throws {
+        // Half an hour without sound: the encoder takes a few seconds to take the silence, and the sound which came
+        // back meanwhile, more than two seconds of it, still waits when the silence is written. Sound which arrives
+        // then must not make it be left out.
+        let recorder = MovieRecorder(device: device)
+        let url = folder.appendingPathComponent("longwait.mov")
+        try recorder.startWriting(to: url, settings: soundSettings(width: 320, height: 180), startTime: 100)
+        let texture = makeTexture(width: 320, height: 180)
+        let before = SoundFeed(from: 100, to: 101), after = SoundFeed(from: 1900, to: 1908)
+        for index in 0..<30 {
+            before.give(to: recorder, upTo: 100 + Double(index) / 30)
+            append(texture, to: recorder, at: 100 + Double(index) / 30)
+        }
+        before.give(to: recorder, upTo: 101)
+        append(texture, to: recorder, at: 1900)
+        after.give(to: recorder, upTo: 1906)
+        // Once the silence is given, the rest of the sound comes
+        let deadline = Date().addingTimeInterval(60)
+        while recorder.soundWritten < 1800 && Date() < deadline { usleep(1000) }
+        after.give(to: recorder, upTo: 1908)
+        XCTAssertNil(finish(recorder, at: 1908))
+
+        XCTAssertEqual(recorder.soundLeftOut, 0)
+        XCTAssertEqual(recorder.soundWritten, 1808, accuracy: 0.05)
+        let sound = try SoundInfo(url, from: 1795)
+        XCTAssertEqual(try XCTUnwrap(sound.soundStart()), 1800, accuracy: 0.03)
+        XCTAssertEqual(sound.frequency(from: 1800.1, to: 1807.9), 1000, accuracy: 5, "the tone is whole")
+        XCTAssertEqual(sound.duration, 1808, accuracy: 0.05)
+    }
+
+    func testATinySilenceIsWrittenAndCleared() throws {
+        // Sound which starts 5 ms after the movie: the timeline anchors it exactly, with 240 samples of silence owed
+        let recorder = MovieRecorder(device: device)
+        let url = try recordWithSound(recorder, name: "tiny", settings: soundSettings(.proRes422), frames: (100, 101),
+                                      sound: [SoundFeed(from: 100.005, to: 101)], finish: 101)
+
+        let sound = try SoundInfo(url)
+        XCTAssertEqual(try XCTUnwrap(sound.soundStart()), 0.005, accuracy: 0.001)
+        XCTAssertEqual(sound.duration, 1, accuracy: 0.001)
+        XCTAssertEqual(recorder.soundWritten, 1, accuracy: 0.001)
+        XCTAssertEqual(recorder.soundLeftOut, 0)
+    }
+
     func testAPieceLongerThanWhatMayWaitIsCutRatherThanLost() throws {
         let recorder = MovieRecorder(device: device)
         let url = folder.appendingPathComponent("longpiece.mov")

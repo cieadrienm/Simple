@@ -73,8 +73,9 @@ struct SoundInfo {
         try load { try await AVURLAsset(url: url).loadTracks(withMediaType: .audio).first != nil }
     }
 
-    /// Reads a movie's sound track. Throws if it has none.
-    init(_ url: URL) throws {
+    /// Reads a movie's sound track, or only the part of it between two times of the movie (`start` is then where the
+    /// part read begins). Throws if it has none.
+    init(_ url: URL, from: Double = 0, to: Double = .infinity) throws {
         self = try SoundInfo.load {
             let asset = AVURLAsset(url: url)
             guard let track = try await asset.loadTracks(withMediaType: .audio).first else {
@@ -89,6 +90,10 @@ struct SoundInfo {
             let duration = try await track.load(.timeRange).duration.seconds
 
             let reader = try AVAssetReader(asset: asset)
+            if from > 0 || to.isFinite {
+                let end = to.isFinite ? CMTime(seconds: to, preferredTimescale: 48000) : CMTime.positiveInfinity
+                reader.timeRange = CMTimeRange(start: CMTime(seconds: from, preferredTimescale: 48000), end: end)
+            }
             let output = AVAssetReaderTrackOutput(track: track, outputSettings: [
                 AVFormatIDKey: kAudioFormatLinearPCM,
                 AVLinearPCMBitDepthKey: 32,
