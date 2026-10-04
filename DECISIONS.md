@@ -102,6 +102,9 @@ Plan : `docs/superpowers/plans/2026-10-04-simple-recorder-part-3.md`. Tranché e
 - NDI : la découverte marche pour le lanceur de tests non signé (un émetteur du même processus est trouvé en une seconde environ).
 - NDI compresse les images : les couleurs reviennent proches, pas exactes ; les tests le tolèrent.
 - L'annonce Bonjour de l'app **signée** n'a pas été confirmée (le build Debug signé ad hoc l'est en 0,7 s) : sans doute l'autorisation « Réseau local », qu'Adrien doit accorder.
+- Charge NDI (4 octobre 2026, app signée, émetteurs sur ce même Mac) : quatre sources NDI 1080p60, en films séparés, assemblé ou les deux, en H.264, HEVC ou ProRes 422 : aucune image perdue, environ un cœur. Huit sources (quatre NDI 1080p60, quatre Syphon 640 × 480) : aucune perte en films séparés, ni avec « les deux » en H.264, ni en HEVC quand l'image assemblée est ramenée à 3840 × 2160 ; mais en HEVC avec l'image assemblée à sa taille naturelle (5760 × 3240), deux des films NDI perdent la moitié de leurs images (comptées). C'est l'encodeur qui ne suit pas, pas la réception : au-delà de la 4K en HEVC, donner une taille à l'image assemblée, ou prendre H.264 ou ProRes. Pendant un tel engorgement, les images écrites peuvent porter une image plus récente que leur date (D59).
+- Simple Server ne publie rien quand l'écran dort (sa vue Metal ne dessine plus) : pour un essai de bout en bout sans écran, prendre `ndi-send` ou un émetteur Syphon qui dessine sur un minuteur.
+- Un émetteur NDI local tué pendant une prise : hors ligne en 1 s environ, sa place noire en 2 s, de retour 2 s après sa relance ; le film est entier.
 
 ## Remis à plus tard (relecture du 1ᵉʳ octobre 2026)
 
