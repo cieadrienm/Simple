@@ -8,9 +8,9 @@ It grew out of Syphon's Simple Client. **Simple Server**, its companion, is stil
 The window
 ----------
 
-- **Sources**, on the left: the Syphon servers which are running, and the NDI sources found on the network, tagged "NDI". Tick one to record it; drag the ticked ones to order them. A source which goes away keeps its place, dimmed, and takes it again when it is back — also when its application was killed and relaunched. Up to eight. Only ticked sources are connected to.
+- **Sources**, on the left: the Syphon servers which are running, and the NDI sources found on the network, tagged "NDI". Tick one to record it; drag the ticked ones to order them. A source which goes away keeps its place, dimmed, and takes it again when it is back — also when its application was killed and relaunched. Up to eight. Only ticked sources are connected to. A note sign marks the sources which have sound.
 - **The picture**, in the middle: the sources assembled, live, as they are (or would be) recorded, each with its title over its part — the titles are not recorded. Under it, the four layouts and the picture's size. With *Separate* it is still shown: it is how the sources are watched.
-- **Settings**, on the right: the codec, frame rate and bitrate of the movies; the size of the assembled picture and the gap between its sources; the folder and the name.
+- **Settings**, on the right: the codec, frame rate and bitrate of the movies; the size of the assembled picture and the gap between its sources; the folder and the name; and, for the assembled movie, which source's sound it takes (*Sound*).
 - **The take**, on top: the record button (⌘R), which stays pressed and shows a stop square while recording, whatever started the recording; the time; frames written and dropped; and what a recording writes: *Separate*, *Assembled* or *Both*.
 - **The state**, at the bottom: the OSC and OSCQuery ports, whether NDI is available ("NDI on" or "NDI off"), the space left, how many movies a recording writes, and why the last recording ended if it failed.
 
@@ -46,11 +46,21 @@ Frames are encoded on the GPU, away from the main thread. If an encoder cannot k
 NDI sources
 -----------
 
-NDI sources are listed beside the Syphon servers, tagged "NDI", and are recorded in the same way: a movie each, assembled, or both. NDI pictures are received as BGRA at full quality and are not flipped; a source without alpha is recorded opaque. NDI's sound is not recorded yet: it comes in part 4.
+NDI sources are listed beside the Syphon servers, tagged "NDI", and are recorded in the same way: a movie each, assembled, or both. NDI pictures are received as BGRA at full quality and are not flipped; a source without alpha is recorded opaque. Their sound is recorded too (see Sound, below).
 
 NDI needs its library, `libndi.dylib`, which Simple Recorder loads at run time. `Scripts/bundle.sh` copies it into the app when the NDI SDK is installed (`/Library/NDI SDK for Apple`); otherwise the app looks for the NDI runtime (`$NDI_RUNTIME_DIR_V6`, then `/usr/local/lib`), then for the SDK's own copy (`/Library/NDI SDK for Apple/lib/macOS/libndi.dylib`), and only when none is found runs with "NDI off": the Syphon sources work as before and nothing is reported as an error. `SIMPLE_NDI_LIBRARY` in the environment chooses a library (an empty value counts as unset; a path to nothing runs with NDI off). If a Syphon server and an NDI source have the same title, the Syphon one is taken. Finding NDI sources on the network needs the Local Network permission, which macOS asks the app for.
 
 NDI® is a registered trademark of Vizrt NDI AB.
+
+Sound
+-----
+
+NDI sources which send sound are recorded with it: in the source's own movie, and in the assembled movie for the one source chosen (`/sound`, or *Sound* in the window's "Assembled" settings; none by default). A note sign in the list of sources marks those which have sound. A source which sends no sound gives a movie without a sound track, exactly as before.
+
+- **Format**: 48 kHz, two channels: the first two of the source, a single channel being copied to both. AAC at 256 kbit/s with H.264 and HEVC, linear PCM at 24 bits with ProRes. Sound at another rate is converted.
+- **In step with the pictures**: like frames, sound is placed by its arrival, and measured it stays within about a frame of the pictures. The track is one unbroken stream: where sound is missing (it starts late, the sender was away) there is silence.
+- **Never delaying the pictures**: if an encoder cannot keep up, sound is left out and counted (`/status/sound/leftout`), and the pictures are written as usual.
+- **Limits**: NDI only (Syphon has no sound); two channels. The sound of the source chosen stays chosen when its source is unticked, and is decided when a recording starts.
 
 OSC and OSCQuery
 ----------------
@@ -71,6 +81,7 @@ Simple Recorder listens for OSC on UDP port **9230** and describes its parameter
 | `/layout` | string | read, write | `row`, `column`, `grid`, `focus`: how the sources are assembled |
 | `/gap` | int | read, write | Pixels between the sources in the assembled picture, up to 1000 |
 | `/width`, `/height` | int | read, write | The size the assembled picture is fitted into; 0 for the size the sources need |
+| `/sound` | string | read, write | The source whose sound the assembled movie takes: its title, or part of it, among the sources chosen; empty for none (the default). OSCQuery lists the titles as its `RANGE`. |
 | `/status/state` | string | read | `idle`, `recording`, or `finishing` while the movies are completed |
 | `/status/elapsed` | float | read | Seconds recorded |
 | `/status/dropped` | int | read | Frames lost in all the movies because an encoder could not keep up |
@@ -82,6 +93,9 @@ Simple Recorder listens for OSC on UDP port **9230** and describes its parameter
 | `/status/source/N/online` | int | read | 1 if the source in place N is delivering frames |
 | `/status/source/N/width`, `/height`, `/fps` | int, int, float | read | What it delivers |
 | `/status/source/N/file`, `/frames`, `/dropped` | string, int, int | read | Its movie |
+| `/status/source/N/sound` | int | read | 1 if the source in place N is sending sound |
+| `/status/sound/written` | float | read | Seconds of sound in the assembled movie |
+| `/status/sound/leftout` | float | read | Seconds of sound left out in all the movies because an encoder could not keep up |
 | `/status/assembled/width`, `/height` | int | read | The size of the assembled picture as it is now, or of the recording in progress |
 | `/status/assembled/file`, `/frames`, `/dropped` | string, int, int | read | The assembled movie |
 | `/status/file`, `/status/frames` | string, int | read | The assembled movie or, if there is none, the first source's |
@@ -104,8 +118,8 @@ MCP
 
 `simple-recorder-mcp` is inside the app (`Contents/MacOS`). It is a stdio MCP server which reads the recorder through OSCQuery and writes with OSC, so the app must be running. `.mcp.json` declares it for Claude Code, from `build/Simple Recorder.app`.
 
-- `recorder_status`: the sources chosen, each with its `kind` (`syphon` or `ndi`) and what it delivers and writes, `ndi` (whether NDI's library is loaded), the sources available as a list of `{title, kind}` (a list of plain titles before NDI: its shape changed), settings, the assembled picture and its movie (`assembled`), state, errors
-- `recorder_configure {sources, source, codec, fps, bitrate, folder, name, output, layout, gap, width, height}`: changes what is given; `sources` is a list of titles, in order, of Syphon servers or NDI sources
+- `recorder_status`: the sources chosen, each with its `kind` (`syphon` or `ndi`) and what it delivers and writes (`sound`: whether it sends sound), `ndi` (whether NDI's library is loaded), the sources available as a list of `{title, kind}` (a list of plain titles before NDI: its shape changed), settings (`sound`: the source whose sound the assembled movie takes), the assembled picture and its movie (`assembled`, with `soundWritten`, seconds of sound in it), `soundLeftOut`, state, errors
+- `recorder_configure {sources, source, codec, fps, bitrate, folder, name, output, layout, gap, width, height, sound}`: changes what is given; `sources` is a list of titles, in order, of Syphon servers or NDI sources; `sound` is the title (or part of it) of the source among them whose sound the assembled movie takes, or empty for none
 - `recorder_start`: accepts the same; returns once recording, or fails with the reason
 - `recorder_stop`: returns once the movies are finished, with their paths
 
@@ -127,7 +141,7 @@ Tests
 
     Scripts/syphon.sh && swift test
 
-They cover which frames a maximum frame rate keeps, OSC messages and the UDP receiver, the OSCQuery server (which is eMotion's, unchanged), movies written from synthetic textures and read back (size, frame count, orientation, transparency, bitrate, a disk which fills up), a recording of several sources (names, one clock, the assembled movie), the layouts, the sources composed into one picture and read back, the sources chosen and their states over OSC, Syphon servers as sources, NDI sources (tested against a sender made with NDI's own library, and skipped when the library is absent), the window's model, and the window itself, which is drawn off screen to `build/views/*.png` in its main states.
+They cover which frames a maximum frame rate keeps, OSC messages and the UDP receiver, the OSCQuery server (which is eMotion's, unchanged), movies written from synthetic textures and read back (size, frame count, orientation, transparency, bitrate, a disk which fills up), a recording of several sources (names, one clock, the assembled movie), the layouts, the sources composed into one picture and read back, the sources chosen and their states over OSC, Syphon servers as sources, NDI sources (tested against a sender made with NDI's own library, and skipped when the library is absent), sound (a tone written to a movie and read back, its frequency, format and duration; sound and picture in step, measured against the SDK's own sender; silence where sound is missing; sound left out rather than delaying pictures), the window's model, and the window itself, which is drawn off screen to `build/views/*.png` in its main states.
 
 Checking without looking at the screen
 --------------------------------------
@@ -137,8 +151,8 @@ Checking without looking at the screen
 - `syphon-probe` lists the Syphon servers which are running, or saves a frame from one of them as a PNG and prints its size and frame rate
 - `gl-server` is a minimal OpenGL Syphon server, to compare with frames from Metal
 - `view-test` saves what Simple Server's view draws for a frame
-- `movie-info` prints the size, duration, frame count, frame rate and codec of movies and when their picture starts, and can save a frame
+- `movie-info` prints the size, duration, frame count, frame rate and codec of movies and when their picture starts, and can save a frame. When a movie has a sound track, a second line gives its codec, sample rate, channels, duration and where sound which is not silence begins. `movie-info --sync <movie> [--region x y w h]` finds the flashes and clicks of a movie made from `ndi-send --tone` and prints, for each second, how far the picture is from the sound (picture minus click, in milliseconds), then the minimum, maximum and mean; `--region` (fractions of the picture) restricts the flashes to one source's place in an assembled picture
 
-- `ndi-send <name> [width height fps] [--bgrx]` is an NDI sender of Simple Server's test pattern (1280 × 720 at 30 by default), to try NDI sources; `--bgrx` sends frames without alpha. It ends on SIGTERM or Ctrl-C.
+- `ndi-send <name> [width height fps] [--bgrx] [--tone [--rate hz] [--channels 1|2|4]]` is an NDI sender of Simple Server's test pattern (1280 × 720 at 30 by default), to try NDI sources; `--bgrx` sends frames without alpha. `--tone` sends sound too (48 kHz and two channels unless told otherwise): a sine on each channel (440, 880, 1320 and 1760 Hz, at −12 dB) and, each second, a 5 ms click at full scale on every channel at the moment of one picture which is white all over, so that `movie-info --sync` can measure the step between sound and picture. It ends on SIGTERM or Ctrl-C.
 
 `Tools/osc-send.py` sends an OSC message, and `Tools/mcp-call.py` calls a tool of an MCP server.

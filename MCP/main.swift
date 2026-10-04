@@ -93,17 +93,22 @@ struct Recorder {
             let status = "/status/source/\(place)/"
             places.append(["place": place, "title": title, "kind": value(status + "kind"), "online": (value(status + "online") as? NSNumber)?.boolValue ?? false,
                            "width": value(status + "width"), "height": value(status + "height"), "fps": value(status + "fps"),
-                           "file": value(status + "file"), "frames": value(status + "frames"), "dropped": value(status + "dropped")])
+                           "file": value(status + "file"), "frames": value(status + "frames"), "dropped": value(status + "dropped"),
+                           "sound": (value(status + "sound") as? NSNumber)?.boolValue ?? false])
         }
         return [
             "sources": places,
             "ndi": (values["/status/ndi"] as? NSNumber)?.boolValue ?? false,
             "sourcesAvailable": sources.map { ["title": $0, "kind": ndiTitles.contains($0) ? "ndi" : "syphon"] },
             "settings": ["codec": value("/codec"), "fps": value("/fps"), "bitrate": value("/bitrate"), "folder": value("/folder"), "name": value("/name"),
-                         "output": value("/output"), "layout": value("/layout"), "gap": value("/gap"), "width": value("/width"), "height": value("/height")],
+                         "output": value("/output"), "layout": value("/layout"), "gap": value("/gap"), "width": value("/width"), "height": value("/height"),
+                         "sound": value("/sound")],
             // The assembled picture as it is now, and the assembled movie of the take being recorded or of the last one
             "assembled": ["width": value("/status/assembled/width"), "height": value("/status/assembled/height"), "file": value("/status/assembled/file"),
-                          "frames": value("/status/assembled/frames"), "dropped": value("/status/assembled/dropped")],
+                          "frames": value("/status/assembled/frames"), "dropped": value("/status/assembled/dropped"),
+                          "soundWritten": value("/status/sound/written")],
+            // Seconds of sound left out, in all the movies, because an encoder could not keep up
+            "soundLeftOut": value("/status/sound/leftout"),
             "state": value("/status/state"),
             "elapsed": value("/status/elapsed"),
             "dropped": value("/status/dropped"),
@@ -234,6 +239,13 @@ struct Recorder {
                 wanted.append(("/" + key, .int(Int32(max(min(value, 1_000_000), -1_000_000))), { (($0 as? NSNumber)?.doubleValue ?? -1) == value.rounded() }))
             }
         }
+        // After the sources: it is matched against the places chosen. The recorder keeps the full title; "" is none
+        if let sound = try string("sound") {
+            wanted.append(("/sound", .string(sound), { value in
+                let stored = value as? String
+                return sound.isEmpty ? stored == "" : stored?.range(of: sound, options: .caseInsensitive) != nil
+            }))
+        }
         for key in ["folder", "name"] {
             if let value = try string(key) {
                 let expected = key == "folder" ? (value as NSString).expandingTildeInPath : value
@@ -334,6 +346,7 @@ let settingsProperties: [String: Any] = [
     "name": ["type": "string", "description": "Name of the recording, without extension: the assembled movie's. Empty: the app's name and the date. A source's own movie adds its source's title, unless it is the only movie. An existing file is never overwritten: a number is added."],
     "output": ["type": "string", "enum": ["separate", "assembled", "both"], "description": "What a recording writes. separate: one movie for each source, at its own size. assembled: one movie of all the sources in one picture. both: all of them."],
     "layout": ["type": "string", "enum": ["row", "column", "grid", "focus"], "description": "How the sources are assembled, in their order. row: side by side. column: stacked. grid: a mosaic. focus: the first large, the others in a column on its right."],
+    "sound": ["type": "string", "description": "The source whose sound the assembled movie takes: its title, or part of it, among the sources chosen; empty for none (the default). Only NDI sources which send sound have any (see sources[].sound in recorder_status); a source's own movie always has its own sound. Sound is 48 kHz stereo (the source's first two channels), AAC with h264 and hevc, linear PCM with prores422 and prores4444. Give it after the sources, or together with them."],
     "gap": ["type": "integer", "description": "Pixels between the sources in the assembled picture (black, or transparent with prores4444)"],
     "width": ["type": "integer", "description": "Width the assembled picture is fitted into. 0 (or a height of 0): the size the sources need (see assembled in recorder_status)."],
     "height": ["type": "integer", "description": "Height the assembled picture is fitted into. 0 (or a width of 0): the size the sources need."],
@@ -342,9 +355,9 @@ let settingsProperties: [String: Any] = [
 let tools: [[String: Any]] = [
     ["name": "recorder_status",
      "description": "The state of Simple Recorder: the sources chosen for recording, in order, with each one's kind (syphon or ndi) and what it delivers (online, size, frame rate) and its movie "
-        + "(file, frames written and dropped); the sources which can be chosen (sourcesAvailable: a list of {title, kind}, kind being syphon or ndi; it was a list of titles before NDI sources came); whether NDI is usable (ndi: false when NDI's library is not installed, which only leaves NDI sources out); the settings, among them what a recording writes "
-        + "(output: separate | assembled | both) and how the sources are assembled (layout, gap, width, height); the assembled picture's size now and "
-        + "the assembled movie (assembled: width, height, file, frames, dropped); whether it is recording "
+        + "(file, frames written and dropped, and sound: true if the source is sending sound, which only NDI sources do); the sources which can be chosen (sourcesAvailable: a list of {title, kind}, kind being syphon or ndi; it was a list of titles before NDI sources came); whether NDI is usable (ndi: false when NDI's library is not installed, which only leaves NDI sources out); the settings, among them what a recording writes "
+        + "(output: separate | assembled | both), which source's sound the assembled movie takes (sound) and how the sources are assembled (layout, gap, width, height); the assembled picture's size now and "
+        + "the assembled movie (assembled: width, height, file, frames, dropped, soundWritten: seconds of sound in it); the seconds of sound left out in all the movies because an encoder could not keep up (soundLeftOut; pictures are never delayed for sound); whether it is recording "
         + "(state: idle | recording | finishing) and for how long; the last error (error: a refused message, a recording which could not start), "
         + "and why the last recording ended if it failed (failure).",
      "inputSchema": schema([:])],
@@ -352,11 +365,13 @@ let tools: [[String: Any]] = [
      "description": "Changes the sources chosen and the settings; only what is given changes. Settings are saved by the app and apply to the next recording. "
         + "The sources cannot be changed while recording. With output separate each source is recorded to its own movie, at its own size; with assembled "
         + "the sources are recorded together in one movie, placed by layout in their order; with both, all of these. All the movies share one clock. "
+        + "A source which sends sound (an NDI source: its sound is true in recorder_status) is recorded with it in its own movie, and the assembled movie takes "
+        + "the sound of the source named by sound, none by default; the sound is 48 kHz stereo, AAC with h264 and hevc, linear PCM with ProRes. A source which sends none gives a movie without a sound track. "
         + "Returns the status afterwards.",
      "inputSchema": schema(settingsProperties)],
     ["name": "recorder_start",
      "description": "Starts recording the sources chosen: one movie (.mov) each, one assembled movie, or both, as output says. "
-        + "Sources and settings can be given as for recorder_configure. Returns once the recording has started, with the path of each source's movie "
+        + "Sources and settings (sound included) can be given as for recorder_configure. Returns once the recording has started, with the path of each source's movie "
         + "in sources[].file and of the assembled movie in assembled.file; fails with the reason if it could not start "
         + "(no source chosen, folder missing, an assembled picture too large…).",
      "inputSchema": schema(settingsProperties)],
