@@ -22,6 +22,13 @@ final class FakeSource: NSObject, FrameSource {
     }
     func stop() { stopped = true }
     func deliver(_ texture: MTLTexture) { frameHandler?(texture) }
+    var soundHandler: ((SourceSound) -> Void)?
+    /// YES once the test has delivered sound
+    private(set) var hasSound = false
+    func deliverSound(_ sound: SourceSound) {
+        hasSound = true
+        soundHandler?(sound)
+    }
 }
 
 /// The sources which exist, as the test says. As in Syphon's directory, a source whose application was killed

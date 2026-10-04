@@ -38,7 +38,8 @@ NS_ASSUME_NONNULL_BEGIN
 
 /*
  An NDI source which is connected to: a thread of its own receives its frames and delivers them as textures, their
- first row at the top, until stop. The thread does not keep the source alive: a source which is released stops.
+ first row at the top, and its sound as pieces (planar floats only), until stop. The thread does not keep the source
+ alive: a source which is released stops.
  */
 @interface NDISource : NSObject <FrameSource>
 

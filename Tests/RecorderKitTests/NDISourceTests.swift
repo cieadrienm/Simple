@@ -35,6 +35,44 @@ private final class FrameLog: @unchecked Sendable {
     }
 }
 
+/// The pieces of sound a source's handler gave, on the source's thread: read on the main thread.
+private final class SoundLog: @unchecked Sendable {
+    private let lock = NSLock()
+    private var _pieces: [SourceSound] = []
+
+    /// The handler to give the source. A piece never changes: it is kept as it is.
+    var handler: (SourceSound) -> Void {
+        { [self] sound in lock.withLock { _pieces.append(sound) } }
+    }
+
+    var pieces: [SourceSound] { lock.withLock { _pieces } }
+    var count: Int { lock.withLock { _pieces.count } }
+    /// Samples in each channel, all pieces together
+    var frameCount: Int { lock.withLock { _pieces.reduce(0) { $0 + Int($1.frameCount) } } }
+    var sampleRates: Set<Double> { Set(pieces.map(\.sampleRate)) }
+
+    /// One of the two channels of the pieces, joined, the first piece left out (it may begin anywhere)
+    func channel(_ channel: Int) -> [Float] {
+        var samples = [Float]()
+        for piece in pieces.dropFirst() {
+            let frames = Int(piece.frameCount)
+            for frame in 0..<frames { samples.append(piece.samples[frame * 2 + channel]) }
+        }
+        return samples
+    }
+
+    /// The frequency of a tone on a channel, by counting its zero crossings
+    func frequency(channel: Int, sampleRate: Double) -> Double {
+        let samples = self.channel(channel)
+        guard samples.count > 1 else { return 0 }
+        var crossings = 0
+        for index in 1..<samples.count where (samples[index - 1] < 0) != (samples[index] < 0) {
+            crossings += 1
+        }
+        return Double(crossings) / 2 / (Double(samples.count) / sampleRate)
+    }
+}
+
 // Other NDI sources may be on this Mac or its network (Adrien's applications): the tests connect to their own senders
 // only, which they always stop.
 final class NDISourceTests: XCTestCase {
@@ -237,6 +275,188 @@ final class NDISourceTests: XCTestCase {
         let count = log.count
         RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.5))
         XCTAssertEqual(log.count, count, "a frame after the source was released")
+    }
+
+    // MARK: Sound
+
+    /// A source connected to a sender of a picture and a tone, once a second of sound has arrived
+    private func receiveTone(_ frequency: Double, channels: Int32, rate: Int32) throws -> SoundLog {
+        let (sender, _) = try makeSender()
+        send(sender, 32, 16)
+        sender.sendTone(frequency: frequency, channelCount: channels, sampleRate: rate)
+        let source = try connect(sender)
+        let log = SoundLog()
+        source.soundHandler = log.handler
+        wait("a second of sound") { log.frameCount >= Int(rate) + 4800 }
+        // No more pieces: the log is read as it is now
+        source.soundHandler = nil
+        return log
+    }
+
+    func testATonesPitchArrives() throws {
+        let log = try receiveTone(1000, channels: 2, rate: 48000)
+        XCTAssertEqual(log.sampleRates, [48000])
+        XCTAssertEqual(log.frequency(channel: 0, sampleRate: 48000), 1000, accuracy: 10)
+        // The second channel at twice the frequency: the sender's
+        XCTAssertEqual(log.frequency(channel: 1, sampleRate: 48000), 2000, accuracy: 20)
+    }
+
+    func testOneChannelArrivesAsTwo() throws {
+        let log = try receiveTone(1000, channels: 1, rate: 48000)
+        XCTAssertEqual(log.channel(0), log.channel(1))
+        XCTAssertEqual(log.frequency(channel: 0, sampleRate: 48000), 1000, accuracy: 10)
+    }
+
+    func testFourChannelsArriveAsTheFirstTwo() throws {
+        // Sent at 500, 1000, 1500 and 2000 Hz
+        let log = try receiveTone(500, channels: 4, rate: 48000)
+        XCTAssertEqual(log.frequency(channel: 0, sampleRate: 48000), 500, accuracy: 5)
+        XCTAssertEqual(log.frequency(channel: 1, sampleRate: 48000), 1000, accuracy: 10)
+    }
+
+    func testA44100HertzSenderIsGivenAsItIs() throws {
+        let log = try receiveTone(1000, channels: 2, rate: 44100)
+        XCTAssertEqual(log.sampleRates, [44100])
+        XCTAssertEqual(log.frequency(channel: 0, sampleRate: 44100), 1000, accuracy: 10)
+    }
+
+    func testHasSoundFollowsTheSender() throws {
+        let (sender, _) = try makeSender()
+        send(sender, 32, 16)
+        let source = try connect(sender)
+        let frames = FrameLog()
+        source.frameHandler = frames.handler
+        wait("frames") { frames.count >= 3 }
+        XCTAssertFalse(source.hasSound, "a sender of pictures only")
+
+        sender.sendTone(frequency: 1000, channelCount: 2, sampleRate: 48000)
+        wait("sound", seconds: 5) { source.hasSound }
+
+        sender.stopSound()
+        wait("no sound", seconds: 5) { !source.hasSound }
+        XCTAssertGreaterThan(frames.count, 3, "pictures go on")
+    }
+
+    func testNoSoundIsDeliveredAfterStop() throws {
+        let (sender, _) = try makeSender()
+        send(sender, 32, 16)
+        sender.sendTone(frequency: 1000, channelCount: 2, sampleRate: 48000)
+        let log = SoundLog()
+        weak var released: NDISource?
+        try autoreleasepool {
+            let source = try XCTUnwrap(NDISource(title: sender.sourceName, name: sender.sourceName, url: sender.sourceURL,
+                                                 library: library, device: device))
+            released = source
+            source.soundHandler = log.handler
+            wait("sound") { log.count >= 3 }
+
+            source.stop()
+            let count = log.count
+            RunLoop.main.run(until: Date(timeIntervalSinceNow: 1))
+            XCTAssertEqual(log.count, count, "sound after stop")
+            XCTAssertNil(source.soundHandler)
+        }
+        XCTAssertNil(released)
+    }
+
+    func testASenderOfPicturesOnlyIsReceivedAsBefore() throws {
+        let (sender, _) = try makeSender()
+        send(sender, 96, 54)
+        let source = try connect(sender)
+        let frames = FrameLog()
+        let sound = SoundLog()
+        source.frameHandler = frames.handler
+        source.soundHandler = sound.handler
+        wait("frames") { frames.count >= 3 }
+        let count = frames.count
+        RunLoop.main.run(until: Date(timeIntervalSinceNow: 1))
+        // 30 pictures a second
+        XCTAssertGreaterThanOrEqual(frames.count - count, 20)
+        XCTAssertEqual(frames.sizes, [CGSize(width: 96, height: 54)])
+        XCTAssertEqual(sound.count, 0)
+        XCTAssertFalse(source.hasSound)
+    }
+
+    // A measurement as much as a test: a click and a white picture sent together, received by a source whose two
+    // handlers feed a movie with their arrival times, are found in the movie this far apart.
+    func testSoundAndPictureAreInStep() throws {
+        let (sender, _) = try makeSender()
+        var blue = self.blue
+        // 60 pictures a second: a click waits less for its picture
+        sender.send(width: 64, height: 36, colour: &blue, marked: true, hasAlpha: true, padding: 0, framesPerSecond: 60)
+        sender.sendSilenceWithClicks(channelCount: 2, sampleRate: 48000)
+        let source = try connect(sender)
+        let frames = FrameLog()
+        source.frameHandler = frames.handler
+        wait("frames") { frames.count >= 3 }
+        wait("sound") { source.hasSound }
+
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("NDISourceTests-\(UUID().uuidString).mov")
+        addTeardownBlock { try? FileManager.default.removeItem(at: url) }
+        let recorder = MovieRecorder(device: device)
+        let settings = MovieRecorderSettings()
+        settings.codec = .proRes422
+        settings.recordsSound = true
+        try recorder.startWriting(to: url, settings: settings, startTime: CACurrentMediaTime())
+        source.frameHandler = { texture in recorder.append(texture, flipped: false, atTime: CACurrentMediaTime()) }
+        source.soundHandler = { sound in recorder.append(sound, atTime: CACurrentMediaTime()) }
+        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.5))
+        for _ in 0..<5 {
+            sender.click()
+            RunLoop.main.run(until: Date(timeIntervalSinceNow: 1))
+        }
+        source.frameHandler = nil
+        source.soundHandler = nil
+        var finished = false
+        var failure: Error?
+        recorder.finish(atTime: CACurrentMediaTime()) { error in
+            failure = error
+            finished = true
+        }
+        wait("finished", seconds: 20) { finished }
+        XCTAssertNil(failure)
+
+        let clicks = try SoundInfo(url).clicks()
+        let whites = try whitePictures(url)
+        XCTAssertEqual(clicks.count, 5, "clicks \(clicks)")
+        XCTAssertEqual(whites.count, 5, "white pictures \(whites)")
+        // Each click with the white picture nearest to it: which comes first is what is measured
+        let steps = clicks.compactMap { click in whites.min { abs($0 - click) < abs($1 - click) }.map { $0 - click } }
+        let text = steps.map { String(format: "%+.1f", $0 * 1000) }.joined(separator: ", ")
+        if !steps.isEmpty {
+            let mean = steps.reduce(0, +) / Double(steps.count)
+            print(String(format: "Sound and picture: picture − click, ms: %@; min %+.1f, max %+.1f, mean %+.1f", text,
+                         steps.min()! * 1000, steps.max()! * 1000, mean * 1000))
+        }
+        for step in steps {
+            XCTAssertLessThanOrEqual(abs(step), 0.05, "picture − click, ms: \(text)")
+        }
+    }
+
+    /// The times at which a movie's picture becomes white all over (the marked quarter included)
+    private func whitePictures(_ url: URL) throws -> [Double] {
+        let asset = AVURLAsset(url: url)
+        let reader = try AVAssetReader(asset: asset)
+        let output = AVAssetReaderTrackOutput(track: try MovieInfo.videoTrack(asset),
+                                              outputSettings: [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA])
+        reader.add(output)
+        reader.startReading()
+        var times = [Double]()
+        var wasWhite = false
+        while let sample = output.copyNextSampleBuffer() {
+            guard let image = CMSampleBufferGetImageBuffer(sample) else { continue }
+            CVPixelBufferLockBaseAddress(image, .readOnly)
+            let rowBytes = CVPixelBufferGetBytesPerRow(image)
+            let bytes = CVPixelBufferGetBaseAddress(image)!.assumingMemoryBound(to: UInt8.self)
+            // In the marked quarter, in the blue, and in the middle
+            let white = [(8, 4), (48, 27), (32, 18)].allSatisfy { x, y in
+                (0..<3).allSatisfy { bytes[y * rowBytes + x * 4 + $0] > 200 }
+            }
+            CVPixelBufferUnlockBaseAddress(image, .readOnly)
+            if white && !wasWhite { times.append(CMSampleBufferGetPresentationTimeStamp(sample).seconds) }
+            wasWhite = white
+        }
+        return times
     }
 
     // MARK: Directory

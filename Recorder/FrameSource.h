@@ -30,6 +30,8 @@
 #import <Foundation/Foundation.h>
 #import <Metal/Metal.h>
 
+@class SourceSound;
+
 NS_ASSUME_NONNULL_BEGIN
 
 typedef NS_ENUM(NSInteger, FrameSourceKind) {
@@ -61,6 +63,11 @@ typedef NS_ENUM(NSInteger, FrameSourceKind) {
 @property (readonly) FrameSourceKind kind;
 // Called for every frame, on any thread
 @property (copy, nullable) void (^frameHandler)(id<MTLTexture> frame);
+// Called for every piece of sound, on any thread; whoever receives it notes when it arrived, as for a frame.
+// A source which has no sound never calls it.
+@property (copy, nullable) void (^soundHandler)(SourceSound *sound);
+// YES once the source has delivered sound, and for as long as it goes on (NO again after three seconds without)
+@property (readonly) BOOL hasSound;
 // NO once what it is connected to has gone: it will deliver nothing more. A source which is alive may be silent
 // (a picture which does not change need not be sent again). Asked on the main thread, of a source which is silent.
 @property (readonly, getter=isAlive) BOOL alive;

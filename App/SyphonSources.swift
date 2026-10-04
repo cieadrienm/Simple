@@ -51,6 +51,10 @@ final class SyphonSource: NSObject, FrameSource {
         set { lock.withLock { handler = newValue } }
     }
 
+    /// Syphon has no sound: never called
+    var soundHandler: ((SourceSound) -> Void)?
+    let hasSound = false
+
     init(title: String, serverDescription: [String: Any], device: MTLDevice) {
         self.title = title
         self.serverDescription = serverDescription

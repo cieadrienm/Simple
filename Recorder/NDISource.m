@@ -32,22 +32,27 @@
 #import <pthread.h>
 #import "NDILibrary+Functions.h"
 #import "NDITextureRing.h"
+#import "SourceSound.h"
 
 // How long the thread waits for a frame before it looks at stop again: what stop may wait
 static const uint32_t NDISourceCaptureMilliseconds = 100;
 // A source just made is alive this long without being connected: a connection takes a moment
 static const NSTimeInterval NDISourceConnectionGrace = 3.0;
+// A source has sound until this long after its last piece
+static const NSTimeInterval NDISourceSoundGrace = 3.0;
 
 // What the source and its thread share: the thread holds this, not the source, so that releasing the source stops it
 @interface NDISourceState : NSObject
-@property (readonly) NSCondition *condition;    // guards receiver, stopping, running, thread
+@property (readonly) NSCondition *condition;    // guards receiver, stopping, running, thread, lastSoundTime
 @property (assign) NDIlib_recv_instance_t receiver; // NULL once the thread is about to destroy it
 @property BOOL stopping;
 @property BOOL running;
 @property (assign) pthread_t thread;
-@property (readonly) NSRecursiveLock *callLock; // guards stopped and handler, and is held while the handler runs
+@property CFTimeInterval lastSoundTime;         // when the last piece of sound arrived, 0 if none has
+@property (readonly) NSRecursiveLock *callLock; // guards stopped and the handlers, and is held while one runs
 @property BOOL stopped;
 @property (copy, nullable) void (^handler)(id<MTLTexture>);
+@property (copy, nullable) void (^soundHandler)(SourceSound *);
 // The strings the receiver was made from, NUL-terminated: NDI may read them for as long as the receiver lives
 @property (readonly) NSData *name;
 @property (readonly, nullable) NSData *url;
@@ -132,6 +137,7 @@ static void NDISourceRun(const NDIlib_v5 *ndi, NDIlib_recv_instance_t receiver, 
     state.thread = pthread_self();
     [state.condition unlock];
     BOOL toldFourCC = NO;
+    BOOL toldSoundFourCC = NO;
     for (;;) {
         @autoreleasepool {
             [state.condition lock];
@@ -140,11 +146,16 @@ static void NDISourceRun(const NDIlib_v5 *ndi, NDIlib_recv_instance_t receiver, 
             if (stopping)
                 break;
             NDIlib_video_frame_v2_t video = {0};
-            // No audio or metadata frame is asked for, so that the SDK does no audio work: sound is part 4
-            switch (ndi->recv_capture_v3(receiver, &video, NULL, NULL, NDISourceCaptureMilliseconds)) {
+            NDIlib_audio_frame_v3_t audio = {0};
+            // No metadata frame is asked for
+            switch (ndi->recv_capture_v3(receiver, &video, &audio, NULL, NDISourceCaptureMilliseconds)) {
                 case NDIlib_frame_type_video:
                     NDISourceDeliver(&video, state, ring, title, &toldFourCC);
                     ndi->recv_free_video_v2(receiver, &video);
+                    break;
+                case NDIlib_frame_type_audio:
+                    NDISourceDeliverSound(&audio, state, title, &toldSoundFourCC);
+                    ndi->recv_free_audio_v3(receiver, &audio);
                     break;
                 default:
                     // Nothing came, the source changed, or the connection was lost: the SDK connects again by itself
@@ -196,6 +207,38 @@ static void NDISourceDeliver(const NDIlib_video_frame_v2_t *video, NDISourceStat
     [state.callLock unlock];
 }
 
+static void NDISourceDeliverSound(const NDIlib_audio_frame_v3_t *audio, NDISourceState *state, NSString *title,
+                                  BOOL *toldFourCC)
+{
+    if (audio->FourCC != NDIlib_FourCC_audio_type_FLTP) {
+        // What the receiver gives unless asked otherwise: anything else is not expected, and is left out
+        if (!*toldFourCC) {
+            uint32_t fourCC = (uint32_t)audio->FourCC;
+            NSLog(@"NDISource: %@ sends sound as %.4s, which is left out", title, (const char *)&fourCC);
+            *toldFourCC = YES;
+        }
+        return;
+    }
+    if (audio->no_channels <= 0 || audio->no_samples <= 0 || audio->channel_stride_in_bytes <= 0 || audio->sample_rate <= 0
+        || !audio->p_data)
+        return;
+    SourceSound *sound = [SourceSound soundWithPlanarSamples:(const float *)audio->p_data
+                                                channelCount:(NSUInteger)audio->no_channels
+                                                  frameCount:(NSUInteger)audio->no_samples
+                                        channelStrideInBytes:(NSUInteger)audio->channel_stride_in_bytes
+                                                  sampleRate:audio->sample_rate];
+    if (!sound)
+        return;
+    [state.condition lock];
+    state.lastSoundTime = CACurrentMediaTime();
+    [state.condition unlock];
+    [state.callLock lock];
+    void (^handler)(SourceSound *) = state.stopped ? nil : state.soundHandler;
+    if (handler)
+        handler(sound);
+    [state.callLock unlock];
+}
+
 - (BOOL)flipped
 {
     // NDI's first row is the top one
@@ -223,6 +266,31 @@ static void NDISourceDeliver(const NDIlib_video_frame_v2_t *video, NDISourceStat
     [_state.callLock unlock];
 }
 
+- (void (^)(SourceSound *))soundHandler
+{
+    [_state.callLock lock];
+    void (^handler)(SourceSound *) = _state.soundHandler;
+    [_state.callLock unlock];
+    return handler;
+}
+
+- (void)setSoundHandler:(void (^)(SourceSound *))soundHandler
+{
+    [_state.callLock lock];
+    if (!_state.stopped)
+        _state.soundHandler = soundHandler;
+    [_state.callLock unlock];
+}
+
+- (BOOL)hasSound
+{
+    // Written by the thread as each piece arrives; a source which stops has no more sound three seconds later
+    [_state.condition lock];
+    CFTimeInterval last = _state.lastSoundTime;
+    [_state.condition unlock];
+    return last > 0 && CACurrentMediaTime() - last < NDISourceSoundGrace;
+}
+
 - (BOOL)isAlive
 {
     // The SDK's receiver is made to be used from several threads at once (its captures may run on several), so it can
@@ -244,6 +312,7 @@ static void NDISourceDeliver(const NDIlib_video_frame_v2_t *video, NDISourceStat
     [_state.callLock lock];
     _state.stopped = YES;
     _state.handler = nil;
+    _state.soundHandler = nil;
     [_state.callLock unlock];
 
     [_state.condition lock];

@@ -29,6 +29,7 @@
 
 #import "NDITestSender.h"
 #import "NDILibrary+Functions.h"
+#import <QuartzCore/QuartzCore.h>
 
 @implementation NDITestSender {
     NDILibrary *_library;
@@ -36,9 +37,21 @@
     NSString *_name;
     NSCondition *_condition;    // guards everything below
     NSMutableData *_picture;
+    NSMutableData *_white;      // the picture all white, if it is marked
     NDIlib_video_frame_v2_t _frame;
     BOOL _threadRunning;
     BOOL _stopping;
+    // Sound
+    int _soundChannels;
+    int _soundRate;
+    double _toneFrequency;      // 0: silence with clicks
+    int64_t _soundSample;       // the first sample of the next piece, for the tone's phase
+    BOOL _clickPending;
+    BOOL _whitePending;
+    CFTimeInterval _clickSoundTime; // when the click's piece and white picture were handed to NDI, 0 until they are
+    CFTimeInterval _clickPictureTime;
+    BOOL _soundThreadRunning;
+    BOOL _soundStopping;
 }
 
 - (instancetype)initWithLibrary:(NDILibrary *)library name:(NSString *)name
@@ -51,6 +64,7 @@
         NDIlib_send_create_t create = {0};
         create.p_ndi_name = name.UTF8String;
         create.clock_video = true;  // send_send_video_v2 then keeps the rate of the frames
+        create.clock_audio = true;  // and send_send_audio_v3 that of the sound: each is sent from its own thread
         _sender = ndi->send_create(&create);
         if (!_sender)
             return nil;
@@ -99,12 +113,19 @@
         }
     }
 
+    NSMutableData *white = nil;
+    if (marked) {
+        white = [NSMutableData dataWithLength:picture.length];
+        memset(white.mutableBytes, 255, white.length);
+    }
+
     [_condition lock];
     if (!_sender || _stopping) {
         [_condition unlock];
         return;
     }
     _picture = picture;
+    _white = white;
     _frame = (NDIlib_video_frame_v2_t){0};
     _frame.xres = width;
     _frame.yres = height;
@@ -140,18 +161,143 @@
         __attribute__((objc_precise_lifetime)) NSMutableData *picture = _picture;
         NDIlib_video_frame_v2_t frame = _frame;
         NDIlib_send_instance_t sender = _sender;
+        if (_whitePending) {
+            _whitePending = NO;
+            if (_white) {
+                picture = _white;
+                frame.p_data = _white.mutableBytes;
+                _clickPictureTime = CACurrentMediaTime();
+                [self logClick];
+            }
+        }
         [_condition unlock];
         // Synchronous, and clocked: it returns when the frame is due
         ndi->send_send_video_v2(sender, &frame);
     }
 }
 
+// MARK: Sound
+
+- (void)sendToneOfFrequency:(double)frequency channelCount:(int)channels sampleRate:(int)rate
+{
+    [self sendSoundOfFrequency:frequency channelCount:channels sampleRate:rate];
+}
+
+- (void)sendSilenceWithClicksOfChannelCount:(int)channels sampleRate:(int)rate
+{
+    [self sendSoundOfFrequency:0 channelCount:channels sampleRate:rate];
+}
+
+- (void)sendSoundOfFrequency:(double)frequency channelCount:(int)channels sampleRate:(int)rate
+{
+    [_condition lock];
+    if (_sender && !_stopping && channels > 0 && rate >= 50) {
+        _toneFrequency = frequency;
+        _soundChannels = channels;
+        _soundRate = rate;
+        if (!_soundThreadRunning) {
+            _soundThreadRunning = YES;
+            NSThread *thread = [[NSThread alloc] initWithTarget:self selector:@selector(runSound) object:nil];
+            thread.name = @"NDITestSender sound";
+            [thread start];
+        }
+    }
+    [_condition unlock];
+}
+
+- (void)click
+{
+    [_condition lock];
+    _clickPending = YES;
+    _whitePending = YES;
+    _clickSoundTime = 0;
+    _clickPictureTime = 0;
+    [_condition unlock];
+}
+
+// Under the lock: once the click's sound and picture have both been handed to NDI
+- (void)logClick
+{
+    if (_clickSoundTime > 0 && _clickPictureTime > 0) {
+        NSLog(@"NDITestSender: a click's white picture was sent %+.1f ms after its sound",
+              (_clickPictureTime - _clickSoundTime) * 1000);
+        _clickSoundTime = 0;
+        _clickPictureTime = 0;
+    }
+}
+
+- (void)runSound
+{
+    const NDIlib_v5 *ndi = _library.functions;
+    for (;;) {
+        [_condition lock];
+        if (_stopping || _soundStopping) {
+            _soundThreadRunning = NO;
+            [_condition broadcast];
+            [_condition unlock];
+            return;
+        }
+        int channels = _soundChannels;
+        int rate = _soundRate;
+        double frequency = _toneFrequency;
+        int64_t first = _soundSample;
+        int samples = rate / 50;
+        _soundSample += samples;
+        BOOL click = _clickPending;
+        _clickPending = NO;
+        NDIlib_send_instance_t sender = _sender;
+        [_condition unlock];
+
+        // Planar: each channel's samples follow the previous channel's
+        NSMutableData *buffer = [NSMutableData dataWithLength:(NSUInteger)channels * (NSUInteger)samples * sizeof(float)];
+        float *planes = buffer.mutableBytes;
+        for (int channel = 0; channel < channels; channel++) {
+            float *plane = planes + (size_t)channel * (size_t)samples;
+            if (frequency > 0) {
+                double step = 2 * M_PI * frequency * (channel + 1) / rate;
+                for (int index = 0; index < samples; index++)
+                    plane[index] = (float)(0.5 * sin(step * (double)(first + index)));
+            } else if (click) {
+                int pulse = MIN(MAX(rate / 200, 1), samples);
+                for (int index = 0; index < pulse; index++)
+                    plane[index] = 1;
+            }
+        }
+        NDIlib_audio_frame_v3_t frame = {0};
+        frame.sample_rate = rate;
+        frame.no_channels = channels;
+        frame.no_samples = samples;
+        frame.timecode = NDIlib_send_timecode_synthesize;
+        frame.FourCC = NDIlib_FourCC_audio_type_FLTP;
+        frame.p_data = (uint8_t *)planes;
+        frame.channel_stride_in_bytes = samples * (int)sizeof(float);
+        if (click && frequency <= 0) {
+            [_condition lock];
+            _clickSoundTime = CACurrentMediaTime();
+            [self logClick];
+            [_condition unlock];
+        }
+        // Synchronous, and clocked: it keeps the rate of the sound
+        ndi->send_send_audio_v3(sender, &frame);
+    }
+}
+
+- (void)stopSound
+{
+    [_condition lock];
+    _soundStopping = YES;
+    while (_soundThreadRunning)
+        [_condition wait];
+    _soundStopping = NO;
+    [_condition unlock];
+}
+
 - (void)stop
 {
     [_condition lock];
     _stopping = YES;
-    // The thread must be done with the sender before it is destroyed
-    while (_threadRunning)
+    // The threads must be done with the sender before it is destroyed
+    while (_threadRunning || _soundThreadRunning)
         [_condition wait];
     NDIlib_send_instance_t sender = _sender;
     _sender = NULL;
