@@ -35,11 +35,16 @@ final class FakeDirectory: NSObject, SourceDirectory {
     private(set) var connections: [FakeSource] = []
     /// The titles of the sources whose frames have their first row at the bottom, as Syphon's
     var flippedTitles = Set<String>()
+    /// What its sources are: Syphon's, or NDI's
+    let kind: FrameSourceKind
 
-    init(_ titles: [String]) { self.titles = titles }
+    init(_ titles: [String], kind: FrameSourceKind = .syphon) {
+        self.titles = titles
+        self.kind = kind
+    }
 
     func availableSources() -> [SourceDescription] {
-        titles.map { SourceDescription(title: $0, detail: "Test", kind: .syphon) }
+        titles.map { SourceDescription(title: $0, detail: kind == .NDI ? "NDI" : "Test", kind: kind) }
     }
 
     func connectToSource(withTitle title: String, device: MTLDevice) -> FrameSource? {
@@ -80,6 +85,8 @@ final class RecorderControllerTests: XCTestCase {
     private var defaults: UserDefaults!
     private var defaultsName: String!
     private var directory: FakeDirectory!
+    /// NDI's, beside `directory`, for the tests whose controller has both
+    private var ndiDirectory: FakeDirectory?
     private var controller: RecorderController!
 
     private let all = ["main view - eMotion", "depthMap - eMotion", "A - Simple Server", "B - Simple Server"]
@@ -116,7 +123,7 @@ final class RecorderControllerTests: XCTestCase {
 
     /// Delivers frames from sources as they would, from another thread, for `seconds`.
     private func deliverFrames(for seconds: Double, from sources: [(String, MTLTexture)]) {
-        let live = sources.compactMap { title, texture in directory.source(title).map { ($0, texture) } }
+        let live = sources.compactMap { title, texture in (directory.source(title) ?? ndiDirectory?.source(title)).map { ($0, texture) } }
         let delivered = expectation(description: "frames delivered")
         DispatchQueue.global().async {
             let end = Date().addingTimeInterval(seconds)
@@ -1133,6 +1140,104 @@ final class RecorderControllerTests: XCTestCase {
         XCTAssertEqual((assembled["frames"] as? [String: Any])?["VALUE"] as? [Int], [0])
     }
 
+    // MARK: NDI
+
+    private let camera = "STUDIO (Camera)", screen = "STUDIO (Screen)"
+
+    /// A controller with Syphon's directory and NDI's, as the app has.
+    private func useSyphonAndNDI(syphon: [String], ndi: [String]) {
+        directory = FakeDirectory(syphon)
+        let ndiDirectory = FakeDirectory(ndi, kind: .NDI)
+        self.ndiDirectory = ndiDirectory
+        controller = RecorderController(device: device, directory: CompositeDirectory(directories: [directory, ndiDirectory]), defaults: defaults)
+        controller.folder = folder.path
+    }
+
+    private func value(_ node: Any?) -> Any? { ((node as? [String: Any])?["VALUE"] as? [Any])?.first }
+
+    func testAPlaceKnowsItsKind() throws {
+        useSyphonAndNDI(syphon: [a], ndi: [camera])
+        tick([a, camera])
+        XCTAssertEqual(controller.places.map(\.kind), [.syphon, .NDI])
+        XCTAssertEqual(controller.places.map(\.kindName), ["syphon", "ndi"])
+
+        // The camera goes away: its place is still NDI's
+        ndiDirectory?.setTitles([])
+        XCTAssertEqual(titles, [a, camera])
+        XCTAssertEqual(controller.places[1].kindName, "ndi")
+
+        // A place restored while its source is away was never connected: its kind is not known
+        let next = RecorderController(device: device, directory: CompositeDirectory(directories: [FakeDirectory([a])]), defaults: defaults)
+        XCTAssertEqual(next.places.map(\.title), [a, camera])
+        XCTAssertEqual(next.places.map(\.kindName), ["syphon", ""])
+    }
+
+    func testNDIOffIsAStateNotAnError() throws {
+        XCTAssertFalse(controller.ndiAvailable)
+        XCTAssertTrue(controller.startNetwork(withOSCPort: 19470, queryPort: 19471, name: "Recorder Test"))
+        let ndi = try XCTUnwrap(value(get("/status/ndi")) as? NSNumber)
+        XCTAssertFalse(CFGetTypeID(ndi) == CFBooleanGetTypeID(), "/status/ndi is served as a boolean")
+        XCTAssertEqual(ndi.intValue, 0)
+        XCTAssertEqual(controller.error, "")
+        XCTAssertEqual(controller.errorCount, 0)
+
+        let announced = expectation(forNotification: .RecorderControllerDidChange, object: controller)
+        announced.assertForOverFulfill = false
+        controller.ndiAvailable = true
+        wait(for: [announced], timeout: 2)
+        XCTAssertEqual((value(get("/status/ndi")) as? NSNumber)?.intValue, 1)
+        controller.ndiAvailable = false
+        XCTAssertEqual((value(get("/status/ndi")) as? NSNumber)?.intValue, 0)
+        XCTAssertEqual(controller.error, "")
+        XCTAssertEqual(controller.errorCount, 0)
+    }
+
+    func testOSCQueryDescribesNDI() throws {
+        useSyphonAndNDI(syphon: [a], ndi: [camera, screen])
+        controller.ndiAvailable = true
+        tick([camera])
+        XCTAssertTrue(controller.startNetwork(withOSCPort: 19480, queryPort: 19481, name: "Recorder Test"))
+
+        let ndi = get("/status/ndi")
+        XCTAssertEqual(ndi["VALUE"] as? [Int], [1])
+        XCTAssertFalse((ndi["DESCRIPTION"] as? String ?? "").isEmpty)
+        let sources = try XCTUnwrap(contents(ndi)["sources"] as? [String: Any])
+        XCTAssertEqual(sources["TYPE"] as? String, "s")
+        XCTAssertEqual(sources["VALUE"] as? [String], ["\(camera)\n\(screen)"], "the NDI sources, one per line, and not Syphon's")
+        XCTAssertFalse((sources["DESCRIPTION"] as? String ?? "").isEmpty)
+
+        let kind = get("/status/source/1/kind")
+        XCTAssertEqual(kind["TYPE"] as? String, "s")
+        XCTAssertEqual(kind["VALUE"] as? [String], ["ndi"])
+        XCTAssertFalse((kind["DESCRIPTION"] as? String ?? "").isEmpty)
+        XCTAssertEqual(get("/status/source/2/kind")["VALUE"] as? [String], [""], "no place, no kind")
+
+        // The list follows the sources
+        ndiDirectory?.setTitles([])
+        XCTAssertEqual(get("/status/ndi/sources")["VALUE"] as? [String], [""])
+    }
+
+    func testAnNDIPlaceIsNotFlippedInTheAssembledPicture() throws {
+        useSyphonAndNDI(syphon: [a], ndi: [camera])
+        // Syphon's first row is the bottom of its picture, NDI's the top: both pictures are red above and blue below
+        directory.flippedTitles = [a]
+        tick([a, camera])
+        send("/output", "assembled")
+        send("/name", "show")
+        let pictures = [(a, solid(64, 48, blue, bottom: red)), (camera, solid(64, 48, red, bottom: blue))]
+        deliverFrames(for: 0.1, from: pictures)
+        XCTAssertTrue(controller.start())
+        deliverFrames(for: 0.4, from: pictures)
+        stopAndWait()
+        XCTAssertEqual(controller.error, "")
+
+        let pixel = try picture(folder.appendingPathComponent("show.mov"))
+        assertColour(pixel(32, 10), red, "the top of the Syphon source")
+        assertColour(pixel(32, 38), blue, "the bottom of the Syphon source")
+        assertColour(pixel(96, 10), red, "the top of the NDI source")
+        assertColour(pixel(96, 38), blue, "the bottom of the NDI source")
+    }
+
     // MARK: OSCQuery
 
     private func get(_ path: String) -> [String: Any] {
@@ -1179,15 +1284,20 @@ final class RecorderControllerTests: XCTestCase {
         XCTAssertEqual(((places["2"] as? [String: Any])?["RANGE"] as? [[String: [String]]])?.first?["VALS"], all)
 
         let status = contents(root["status"])
-        XCTAssertEqual(Set(status.keys), ["state", "elapsed", "frames", "dropped", "file", "error", "failure", "source", "assembled"])
+        XCTAssertEqual(Set(status.keys), ["state", "elapsed", "frames", "dropped", "file", "error", "failure", "source", "assembled", "ndi"])
         XCTAssertEqual((status["state"] as? [String: Any])?["VALUE"] as? [String], ["idle"])
         let placeStatus = contents(contents(status["source"])["1"])
-        XCTAssertEqual(Set(placeStatus.keys), ["online", "width", "height", "fps", "file", "frames", "dropped"])
+        XCTAssertEqual(Set(placeStatus.keys), ["online", "width", "height", "fps", "file", "frames", "dropped", "kind"])
         XCTAssertEqual(Set(contents(status["source"]).keys), Set((1...8).map(String.init)))
         // An OSC int, not a JSON true or false
         let online = try XCTUnwrap(((placeStatus["online"] as? [String: Any])?["VALUE"] as? [Any])?.first as? NSNumber)
         XCTAssertFalse(CFGetTypeID(online) == CFBooleanGetTypeID(), "online is served as a boolean")
         XCTAssertEqual(online.intValue, 0)
+        XCTAssertEqual((placeStatus["kind"] as? [String: Any])?["VALUE"] as? [String], ["syphon"])
+        // /status/ndi has a value, and what it says of the sources
+        let ndi = try XCTUnwrap(status["ndi"] as? [String: Any])
+        XCTAssertEqual(ndi["VALUE"] as? [Int], [0])
+        XCTAssertEqual(Set(contents(ndi).keys), ["sources"])
         for (name, node) in root where name != "status" {
             XCTAssertFalse(((node as? [String: Any])?["DESCRIPTION"] as? String ?? "").isEmpty, "\(name) has no description")
         }

@@ -95,6 +95,9 @@ static const NSTimeInterval kLongestSilenceTimeout = 30.0;
 @property (assign) NSTimeInterval checkTime;
 // Main thread: how many times in a row its source was found alive and silent
 @property (assign) NSUInteger silentChecks;
+@property (readwrite) FrameSourceKind kind;
+// Main thread: YES once it has connected, and its kind is known
+@property (assign) BOOL kindKnown;
 @end
 
 @implementation RecorderPlace {
@@ -234,6 +237,15 @@ static const NSTimeInterval kLongestSilenceTimeout = 30.0;
 - (NSUInteger)dropped
 {
     return self.movie.framesDropped;
+}
+
+- (NSString *)kindName
+{
+    if (!self.kindKnown)
+    {
+        return @"";
+    }
+    return self.kind == FrameSourceKindNDI ? @"ndi" : @"syphon";
 }
 
 @end
@@ -530,6 +542,12 @@ static NSString *StringFrom(NSArray *arguments)
     _gap = MIN(MAX(gap, 0), kMaximumGap);
     [_defaults setInteger:_gap forKey:@"RecorderGap"];
     [self compositionChanged];
+    [self changed];
+}
+
+- (void)setNdiAvailable:(BOOL)ndiAvailable
+{
+    _ndiAvailable = ndiAvailable;
     [self changed];
 }
 
@@ -906,6 +924,16 @@ static Layout *MonitorLayout(Layout *layout, LayoutKind kind, NSArray *sizes, NS
     if (source == nil)
     {
         return;
+    }
+    // Its kind is that of the source listed with its title: the first directory's, as the source connected to is
+    for (SourceDescription *description in self.availableSources)
+    {
+        if ([description.title isEqualToString:place.title])
+        {
+            place.kind = description.kind;
+            place.kindKnown = YES;
+            break;
+        }
     }
     BOOL flipped = source.flipped;
     Take *take = _take;
@@ -1548,6 +1576,23 @@ static Layout *MonitorLayout(Layout *layout, LayoutKind kind, NSArray *sizes, NS
                           key:@"recordingError"]
     ]];
 
+    RecorderParameter *ndi = [self parameter:@"/status/ndi" type:@"i" summary:@"1 if NDI is available: its library is installed. Without it there are no NDI sources, which is not an error."];
+    // An OSC int, not a JSON true or false
+    ndi.get = ^{ return @[@(weakSelf.ndiAvailable ? 1 : 0)]; };
+    RecorderParameter *ndiSources = [self parameter:@"/status/ndi/sources" type:@"s" summary:@"The titles of the NDI sources available, one per line: the other sources are Syphon's"];
+    ndiSources.get = ^{
+        NSMutableArray<NSString *> *titles = [NSMutableArray array];
+        for (SourceDescription *source in weakSelf.availableSources)
+        {
+            if (source.kind == FrameSourceKindNDI)
+            {
+                [titles addObject:source.title];
+            }
+        }
+        return @[[titles componentsJoinedByString:@"\n"]];
+    };
+    [parameters addObjectsFromArray:@[ndi, ndiSources]];
+
     for (NSUInteger place = 1; place <= RecorderMaximumPlaces; place++)
     {
         [parameters addObjectsFromArray:@[
@@ -1557,7 +1602,8 @@ static Layout *MonitorLayout(Layout *layout, LayoutKind kind, NSArray *sizes, NS
             [self placeStatusParameter:@"fps" place:place type:@"f" summary:@"Frames the source delivers each second" key:@"fps"],
             [self placeStatusParameter:@"file" place:place type:@"s" summary:@"The source's movie, being written or last written" key:@"file"],
             [self placeStatusParameter:@"frames" place:place type:@"i" summary:@"Frames written to the source's movie" key:@"frames"],
-            [self placeStatusParameter:@"dropped" place:place type:@"i" summary:@"Frames of the source lost because the encoder could not keep up" key:@"dropped"]
+            [self placeStatusParameter:@"dropped" place:place type:@"i" summary:@"Frames of the source lost because the encoder could not keep up" key:@"dropped"],
+            [self placeStatusParameter:@"kind" place:place type:@"s" summary:@"What the source is: syphon or ndi. Empty until it has been connected to." key:@"kindName"]
         ]];
     }
 

@@ -60,6 +60,9 @@ extern const NSUInteger RecorderMaximumPlaces;
 @property (readonly, nullable) id<MTLTexture> latestFrame;
 // YES if the first row of latestFrame is the bottom of the picture
 @property (readonly) BOOL flipped;
+// What its source is, learned when it connects and kept when the source goes away
+@property (readonly) FrameSourceKind kind;
+@property (readonly, copy) NSString *kindName;    // /status/source/N/kind: "syphon", "ndi"; empty if never connected
 @end
 
 /*
@@ -96,6 +99,9 @@ extern const NSUInteger RecorderMaximumPlaces;
 @property (readonly, copy) NSArray<RecorderPlace *> *places;
 // The sources which can be chosen
 @property (readonly, copy) NSArray<SourceDescription *> *availableSources;
+// /status/ndi: YES if NDI's library could be loaded, as the app finds. NO by default. Without it there are no NDI
+// sources, which is not an error. (/status/ndi/sources tells the titles of the NDI sources available.)
+@property (nonatomic, assign) BOOL ndiAvailable;
 // Chooses the source with this title or, failing that, the first whose title contains it, whatever the case, and
 // gives it the next place. YES if it is chosen (it may have been already).
 - (BOOL)addSourceMatching:(NSString *)title;

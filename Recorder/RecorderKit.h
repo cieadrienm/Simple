@@ -42,3 +42,4 @@
 #import "NDILibrary.h"
 #import "NDITextureRing.h"
 #import "NDIDirectory.h"
+#import "CompositeDirectory.h"
