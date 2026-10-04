@@ -41,3 +41,4 @@
 #import "RecorderController.h"
 #import "NDILibrary.h"
 #import "NDITextureRing.h"
+#import "NDIDirectory.h"
