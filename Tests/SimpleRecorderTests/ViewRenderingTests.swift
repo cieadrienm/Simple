@@ -165,6 +165,31 @@ final class ViewRenderingTests: XCTestCase {
         XCTAssertGreaterThan(colours(try render("8-ndi-sources")), 8)
     }
 
+    func testTheWindowWithSound() throws {
+        try useNDISources(available: true)
+        model.tick("STUDIO (Camera 1)")
+        model.tick("STUDIO (Camera 2)")
+        model.setOutput("both")
+        model.setSound("STUDIO (Camera 2)")
+        try XCTUnwrap(recorder.directory.source("STUDIO (Camera 2)")).deliverSound(SourceSound.silence(ofFrameCount: 960, sampleRate: 48000))
+        spin(0.3)
+        XCTAssertEqual(model.places.map(\.hasSound), [false, true])
+        XCTAssertGreaterThan(colours(try render("10-sound")), 8)
+    }
+
+    func testTheWindowWithTheSoundOfASourceWhichIsNotSelected() throws {
+        try useNDISources(available: true)
+        model.tick("STUDIO (Camera 1)")
+        model.tick("STUDIO (Camera 2)")
+        model.setOutput("both")
+        model.setSound("STUDIO (Camera 2)")
+        model.untick(place: 2)
+        spin(0.3)
+        XCTAssertEqual(model.sound, "STUDIO (Camera 2)")
+        XCTAssertEqual(model.places.map(\.title), ["STUDIO (Camera 1)"])
+        XCTAssertGreaterThan(colours(try render("11-sound-not-selected")), 8)
+    }
+
     func testTheWindowWithoutNDI() throws {
         try useNDISources(available: false)
         model.tick("A - Simple Server")

@@ -94,6 +94,26 @@ struct InspectorView: View {
                         Text("pixels").font(.system(size: 11)).foregroundStyle(Theme.textFaint)
                     }
                 }
+                row("Sound") {
+                    Picker("", selection: Binding(get: { model.sound }, set: { model.setSound($0) })) {
+                        Text("None").tag("")
+                        ForEach(soundTitles, id: \.self) { Text($0).tag($0) }
+                        if !model.sound.isEmpty && !soundTitles.contains(model.sound) {
+                            Text("\(model.sound) (not selected)").tag(model.sound)
+                        }
+                    }
+                    .labelsHidden()
+                    .help("The source whose sound the assembled movie takes")
+                }
+                // Only the assembled movie takes it: the setting stays in sight
+                .opacity(model.output == "separate" ? 0.5 : 1)
+                if !model.sound.isEmpty && !soundTitles.contains(model.sound) {
+                    // The picker's text is cut at this width: the hint says what its entry says
+                    Text("\(model.sound) is not selected: the assembled movie has no sound.")
+                        .font(.system(size: 10)).foregroundStyle(Theme.textFaint)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .opacity(model.output == "separate" ? 0.5 : 1)
+                }
             }
             .disabled(model.isRecording)
 
@@ -146,6 +166,11 @@ struct InspectorView: View {
             model.setSize(width: picture.width > 0 ? min(Int(picture.width), Int(RecorderModel.largestSide)) : 1920,
                           height: picture.height > 0 ? min(Int(picture.height), Int(RecorderModel.largestSide)) : 1080)
         }
+    }
+
+    /// The NDI sources which are chosen: sound may come from any of them
+    private var soundTitles: [String] {
+        model.places.filter { $0.kind == "ndi" }.map(\.title)
     }
 
     /// The rates offered, with the one in use if it is another

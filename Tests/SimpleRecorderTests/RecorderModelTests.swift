@@ -287,4 +287,39 @@ final class RecorderModelTests: XCTestCase {
         XCTAssertEqual(other.ndiOffReason, "libndi.dylib was not found")
         XCTAssertEqual(model.ndiOffReason, "")
     }
+
+    // MARK: Sound
+
+    func testAPlaceSaysItHasSound() throws {
+        recorder.cleanUp()
+        recorder = try TestRecorder(ndi: ["HOST (cam 1)", "HOST (cam 2)"])
+        model = RecorderModel(controller: recorder.controller)
+        model.tick("HOST (cam 1)")
+        model.tick("HOST (cam 2)")
+        XCTAssertEqual(model.places.map(\.hasSound), [false, false])
+        let source = try XCTUnwrap(recorder.directory.source("HOST (cam 2)"))
+        source.deliverSound(SourceSound.silence(ofFrameCount: 960, sampleRate: 48000))
+        // The controller says nothing when a source starts to have sound: the model reads it with the next change
+        send("/fps", NSNumber(value: 25))
+        XCTAssertEqual(model.places.map(\.hasSound), [false, true])
+    }
+
+    func testSoundFollowsTheControllerBothWays() throws {
+        recorder.cleanUp()
+        recorder = try TestRecorder(ndi: ["HOST (cam 1)", "HOST (cam 2)"])
+        model = RecorderModel(controller: recorder.controller)
+        model.tick("HOST (cam 1)")
+        model.tick("HOST (cam 2)")
+        XCTAssertEqual(model.sound, "")
+        model.setSound("HOST (cam 2)")
+        XCTAssertEqual(recorder.controller.sound, "HOST (cam 2)")
+        XCTAssertEqual(model.sound, "HOST (cam 2)")
+        // The other way: OSC
+        send("/sound", "HOST (cam 1)")
+        XCTAssertEqual(model.sound, "HOST (cam 1)")
+        model.setSound("")
+        XCTAssertEqual(recorder.controller.sound, "")
+        XCTAssertEqual(model.sound, "")
+        XCTAssertEqual(model.soundLeftOut, 0)
+    }
 }

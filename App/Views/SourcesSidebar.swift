@@ -37,7 +37,7 @@ struct SourcesSidebar: View {
         List {
             Section {
                 ForEach(Array(model.places.enumerated()), id: \.element.id) { index, place in
-                    SourceRow(title: place.title, detail: detail(place), isNDI: place.kind == "ndi", isChosen: true, isDimmed: !place.isOnline) {
+                    SourceRow(title: place.title, detail: detail(place), isNDI: place.kind == "ndi", hasSound: place.hasSound, isChosen: true, isDimmed: !place.isOnline) {
                         model.untick(place: index + 1)
                     }
                 }
@@ -55,7 +55,7 @@ struct SourcesSidebar: View {
             if !model.available.isEmpty {
                 Section {
                     ForEach(model.available) { source in
-                        SourceRow(title: source.title, detail: source.detail, isNDI: source.kind == "ndi", isChosen: false, isDimmed: false) {
+                        SourceRow(title: source.title, detail: source.detail, isNDI: source.kind == "ndi", hasSound: false, isChosen: false, isDimmed: false) {
                             model.tick(source.title)
                         }
                     }
@@ -81,6 +81,8 @@ struct SourceRow: View {
     let title: String
     let detail: String
     let isNDI: Bool
+    /// Its source is delivering sound, which its movie records
+    let hasSound: Bool
     let isChosen: Bool
     let isDimmed: Bool
     let toggle: () -> Void
@@ -97,6 +99,11 @@ struct SourceRow: View {
             }
             if isNDI {
                 Spacer(minLength: 4)
+                if hasSound {
+                    Image(systemName: "music.note").font(.system(size: 10)).foregroundStyle(Theme.textDim)
+                        .help("Its sound is recorded in its movie")
+                        .accessibilityLabel("Has sound")
+                }
                 // Tells NDI sources from Syphon's at a glance
                 Text("NDI").font(Theme.mono(9, .medium)).foregroundStyle(Theme.accent)
                     .padding(.horizontal, 4).padding(.vertical, 1)

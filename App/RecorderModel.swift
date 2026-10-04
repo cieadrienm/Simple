@@ -50,6 +50,8 @@ final class RecorderModel: ObservableObject {
         var dropped: Int
         /// "syphon" or "ndi"; empty while the place has never been connected
         var kind: String
+        /// Whether its source is delivering sound now
+        var hasSound = false
     }
 
     /// A source which can be chosen
@@ -95,6 +97,10 @@ final class RecorderModel: ObservableObject {
     @Published private(set) var titleRects: [CGRect] = []
     @Published private(set) var assembledFrames = 0
     @Published private(set) var assembledDropped = 0
+    /// The title of the source whose sound the assembled movie takes, empty for none
+    @Published private(set) var sound = ""
+    /// Seconds of sound left out of the take's movies, to the tenth
+    @Published private(set) var soundLeftOut: Double = 0
     /// Whether NDI's library is loaded: without it NDI sources are not listed
     @Published private(set) var ndiAvailable = false
     @Published private(set) var oscPort = 0
@@ -174,10 +180,12 @@ final class RecorderModel: ObservableObject {
         set(\.oscPort, controller.oscPort)
         set(\.oscQueryPort, controller.oscQueryPort)
         set(\.failure, controller.recordingError)
+        set(\.sound, controller.sound)
+        set(\.soundLeftOut, (controller.soundLeftOut * 10).rounded() / 10)
 
         let chosen = controller.places.map {
             Place(title: $0.title, isOnline: $0.isOnline, width: $0.width, height: $0.height, fps: ($0.fps * 10).rounded() / 10,
-                  file: $0.file, frames: Int($0.frames), dropped: Int($0.dropped), kind: $0.kindName)
+                  file: $0.file, frames: Int($0.frames), dropped: Int($0.dropped), kind: $0.kindName, hasSound: $0.hasSound)
         }
         set(\.places, chosen)
         let picture = controller.assembledLayout
@@ -242,6 +250,8 @@ final class RecorderModel: ObservableObject {
     func setOutput(_ output: String) { controller.output = output }
     func setLayout(_ layout: String) { controller.layout = layout }
     func setGap(_ gap: Int) { controller.gap = gap }
+    /// The title of the source whose sound the assembled movie takes, empty for none
+    func setSound(_ title: String) { controller.sound = title }
     /// 0 and 0 for the size the sources need
     func setSize(width: Int, height: Int) {
         controller.width = width

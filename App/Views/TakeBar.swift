@@ -58,7 +58,7 @@ struct TakeBar: View {
     }
 
     @ViewBuilder private var caption: some View {
-        switch TakeCaption.of(state: model.state, notice: model.notice, failure: model.failure, frames: model.frames, dropped: model.dropped) {
+        switch TakeCaption.of(state: model.state, notice: model.notice, failure: model.failure, frames: model.frames, dropped: model.dropped, soundLost: model.soundLeftOut) {
         case .none:
             EmptyView()
         case .notice(let notice):
@@ -69,10 +69,15 @@ struct TakeBar: View {
                 .foregroundStyle(Theme.record).font(.system(size: 12)).lineLimit(2)
         case .finishing:
             Text("Finishing the movies\u{2026}").font(.system(size: 12)).foregroundStyle(Theme.textDim)
-        case .progress(let frames, let dropped):
-            Text("\(frames) frames \u{00B7} \(dropped) dropped")
-                .font(Theme.mono(12))
-                .foregroundStyle(dropped > 0 ? Theme.accent : Theme.textDim)
+        case .progress(let frames, let dropped, let soundLost):
+            HStack(spacing: 0) {
+                Text("\(frames) frames \u{00B7} \(dropped) dropped")
+                    .foregroundStyle(dropped > 0 ? Theme.accent : Theme.textDim)
+                if soundLost > 0 {
+                    Text(" \u{00B7} \(TakeCaption.soundLostText(soundLost)) of sound lost").foregroundStyle(Theme.accent)
+                }
+            }
+            .font(Theme.mono(12))
         }
     }
 }
@@ -85,18 +90,24 @@ enum TakeCaption: Equatable {
     /// Why a recording ended, or why one of its movies has stopped while the others go on
     case failure(String)
     case finishing
-    case progress(frames: Int, dropped: Int)
+    case progress(frames: Int, dropped: Int, soundLost: Double)
 
-    static func of(state: String, notice: String, failure: String, frames: Int, dropped: Int) -> TakeCaption {
+    static func of(state: String, notice: String, failure: String, frames: Int, dropped: Int, soundLost: Double = 0) -> TakeCaption {
         if !notice.isEmpty { return .notice(notice) }
         // A movie which has failed while the take goes on must stay in sight for as long as it does: nobody is
         // watching at the moment it happens
         if !failure.isEmpty { return .failure(failure) }
         switch state {
-        case "recording": return .progress(frames: frames, dropped: dropped)
+        case "recording": return .progress(frames: frames, dropped: dropped, soundLost: soundLost)
         case "finishing": return .finishing
         default: return .none
         }
+    }
+
+    /// Seconds of sound lost, said briefly: "0.4 s", "3.0 s", "12 s"; empty when none was
+    static func soundLostText(_ seconds: Double) -> String {
+        guard seconds > 0 else { return "" }
+        return seconds < 10 ? String(format: "%.1f s", seconds) : String(format: "%.0f s", seconds)
     }
 }
 
