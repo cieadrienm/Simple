@@ -30,8 +30,18 @@
 #import "SoundTimeline.h"
 #import "SourceSound.h"
 
-// How far the stream's end may be from the clock before it is corrected, in seconds
-static const double Tolerance = 0.1;
+/*
+ A single piece's arrival jitters by tens of milliseconds, so a piece is never corrected on its own evidence unless it
+ is far out (the hard tolerance: sound was away, or was left out). The average of the error over a couple of seconds
+ of sound is steady: it is what keeps the sound within about a frame of the pictures, at the start and over hours,
+ by a correction whenever it passes the soft tolerance.
+ */
+// Beyond it, a piece is placed exactly where it belongs, in seconds
+static const double HardTolerance = 0.1;
+// Beyond it, the smoothed error is corrected, in seconds
+static const double SoftTolerance = 0.02;
+// The time constant of the smoothed error, in seconds of sound
+static const double TimeConstant = 2.0;
 // The longest piece of silence given at once, in seconds
 static const double LongestSilence = 10.0;
 // The farthest from the stream's end a piece may be placed, in seconds: beyond it the time given is taken as wrong
@@ -49,6 +59,9 @@ static const double Reach = 24 * 3600.0;
     long long _written;
     long long _silence;
     long long _leftOut;
+    // Whether its first piece has been placed, and the smoothed error since the last correction, in samples
+    BOOL _anchored;
+    double _smoothedError;
     // Of the runs before it
     NSTimeInterval _silenceBefore;
     NSTimeInterval _leftOutBefore;
@@ -90,6 +103,8 @@ static const double Reach = 24 * 3600.0;
     _silence = 0;
     _leftOut = 0;
     _rate = rate;
+    _anchored = NO;
+    _smoothedError = 0.0;
     _longestSilence = nil;
 }
 
@@ -109,14 +124,31 @@ static const double Reach = 24 * 3600.0;
     long long frameCount = (long long)sound.frameCount;
     // How far the piece's place is from the stream's end, in samples of this run
     long long error = llround((place - _runStart) * _rate) - _written;
-    long long tolerance = llround(Tolerance * _rate);
 
-    if (error > tolerance)
+    // The correction to make: the error itself, or its smoothed value once it is steady
+    long long correction = 0;
+    if (!_anchored || llabs(error) > llround(HardTolerance * _rate))
+    {
+        _anchored = YES;
+        correction = error;
+        _smoothedError = 0.0;
+    }
+    else
+    {
+        _smoothedError += MIN(1.0, sound.duration / TimeConstant) * (error - _smoothedError);
+        if (fabs(_smoothedError) > SoftTolerance * _rate)
+        {
+            correction = llround(_smoothedError);
+            _smoothedError = 0.0;
+        }
+    }
+
+    if (correction > 0)
     {
         // Late: silence fills the hole, the longest pieces all one and the same
         NSMutableArray<SourceSound *> *pieces = [NSMutableArray array];
         long long longest = llround(LongestSilence * _rate);
-        long long left = error;
+        long long left = correction;
         for (; left >= longest; left -= longest)
         {
             if (_longestSilence == nil)
@@ -130,14 +162,14 @@ static const double Reach = 24 * 3600.0;
             [pieces addObject:[SourceSound silenceOfFrameCount:(NSUInteger)left sampleRate:_rate]];
         }
         [pieces addObject:sound];
-        _silence += error;
-        _written += error + frameCount;
+        _silence += correction;
+        _written += correction + frameCount;
         return pieces;
     }
-    if (error < -tolerance)
+    if (correction < 0)
     {
         // Early: what overlaps the stream is left out
-        long long overlap = -error;
+        long long overlap = -correction;
         if (overlap >= frameCount)
         {
             _leftOut += frameCount;

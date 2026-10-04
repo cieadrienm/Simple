@@ -37,20 +37,23 @@ NS_ASSUME_NONNULL_BEGIN
  Places pieces of sound, which arrive at moments of our clock but were made on their source's, in one unbroken
  stream of samples which begins at the track's zero.
 
- A piece arrives when its last sample has been made: its place by our clock is its arrival less its duration. While
- the stream's end is within 0.1 s of that place the piece simply follows; beyond it, the stream is brought back
- exactly onto the clock, with silence or by leaving sound out. The stream is counted in whole samples of the
- pieces' rate.
+ A piece arrives when its last sample has been made: its place by our clock is its arrival less its duration. The
+ stream is counted in whole samples of the pieces' rate.
  */
 @interface SoundTimeline : NSObject
 // origin: the time which is sample 0, on the clock of the times given below
 - (instancetype)initWithOrigin:(NSTimeInterval)origin;
 - (instancetype)init NS_UNAVAILABLE;
 + (instancetype)new NS_UNAVAILABLE;
-// The pieces to write for a piece which arrived at a time, in order, each following the last sample written:
-// usually the piece itself; silence then the piece when sound is late by more than the tolerance (it starts late,
-// it was away, it was left out); the piece less its first samples, or nothing, when it is early by more.
-// A piece which ends before the origin gives nothing. A change of sample rate starts a new run at the time given.
+// The pieces to write for a piece which arrived at a time, in order, each following the last sample written: the
+// piece itself; or silence then the piece when the stream is to catch up with the clock; or the piece less its first
+// samples, or nothing, when the stream is ahead of it.
+// The first piece of a run (the first, and the first after a change of sample rate) is placed exactly where it
+// belongs. So is a piece more than 0.1 s from the stream's end: sound was away, or was left out. Closer than that,
+// a single piece's arrival is no evidence (it jitters by tens of milliseconds): the error is smoothed over about two
+// seconds of sound, and when it passes 0.02 s the stream is corrected by it, which keeps sound within about a frame
+// of the pictures at the start and over hours.
+// A piece which ends before the origin gives nothing.
 // Silence comes in pieces of no more than 10 s (those of 10 s are one and the same, so that a long one costs one
 // buffer). A time which is not a number, or which would place the piece more than 24 hours from the stream's end,
 // is taken as wrong: it gives nothing and changes nothing.
