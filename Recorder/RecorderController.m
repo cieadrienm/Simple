@@ -57,6 +57,8 @@ static const CGFloat kMonitorLargestSide = 4096.0;
 static const NSTimeInterval kRefreshInterval = 0.25;
 // A source which has delivered no frame for this long is not online
 static const NSTimeInterval kOnlineTimeout = 1.0;
+// A source which has delivered no sound for this long has none
+static const NSTimeInterval kSoundTimeout = 3.0;
 // A source which has delivered no frame for this long is asked whether it is alive, and a place without its
 // source tries for it again this often
 static const NSTimeInterval kSilenceTimeout = 2.0;
@@ -110,8 +112,13 @@ static const NSTimeInterval kLongestSilenceTimeout = 30.0;
     NSInteger _height;
     NSUInteger _frameCount;
     NSTimeInterval _lastFrameTime;
-    // The source's index in the take being recorded, NSNotFound otherwise
+    // When the last piece of sound arrived from the source connected to, 0 if none has
+    NSTimeInterval _lastSoundTime;
+    // The source's index in the take being recorded if it has a movie in it, NSNotFound otherwise
     NSUInteger _takeIndex;
+    // The source's index in the take being recorded, NSNotFound otherwise: its sound may go to the assembled movie
+    // when it has no movie of its own
+    NSUInteger _soundIndex;
     // Main thread: the frame rate, measured from one refresh to the next
     NSUInteger _measuredFrameCount;
     NSTimeInterval _measuredTime;
@@ -127,6 +134,7 @@ static const NSTimeInterval kLongestSilenceTimeout = 30.0;
         _title = [title copy];
         _lock = OS_UNFAIR_LOCK_INIT;
         _takeIndex = NSNotFound;
+        _soundIndex = NSNotFound;
     }
     return self;
 }
@@ -146,22 +154,35 @@ static const NSTimeInterval kLongestSilenceTimeout = 30.0;
     return index;
 }
 
+// Any thread. Returns the source's index in the take for its sound, NSNotFound if it is not being recorded.
+- (NSUInteger)receivedSoundAtTime:(NSTimeInterval)time
+{
+    os_unfair_lock_lock(&_lock);
+    _lastSoundTime = time;
+    NSUInteger index = _soundIndex;
+    os_unfair_lock_unlock(&_lock);
+    return index;
+}
+
 // Main thread: stops its source, then forgets its last frame, which is not drawn again: its part of the picture is
 // empty until a frame arrives from a new connection. Its size stays, so that the layout does not jump. In this
-// order, as a source delivers nothing once stop has returned.
+// order, as a source delivers nothing once stop has returned. Its sound is that of the next connection.
 - (void)letGoOfSource
 {
     [self.source stop];
     self.source = nil;
     os_unfair_lock_lock(&_lock);
     _latestFrame = nil;
+    _lastSoundTime = 0.0;
     os_unfair_lock_unlock(&_lock);
 }
 
-- (void)setTakeIndex:(NSUInteger)index
+// index: its place in the take, NSNotFound out of one. hasMovie: its frames are recorded; its sound may be anyway.
+- (void)setTakeIndex:(NSUInteger)index hasMovie:(BOOL)hasMovie
 {
     os_unfair_lock_lock(&_lock);
-    _takeIndex = index;
+    _takeIndex = hasMovie ? index : NSNotFound;
+    _soundIndex = index;
     os_unfair_lock_unlock(&_lock);
 }
 
@@ -201,6 +222,24 @@ static const NSTimeInterval kLongestSilenceTimeout = 30.0;
 - (double)fps
 {
     return _fps;
+}
+
+// Read when asked rather than at each refresh: a take which starts must know whether the source has sound now
+- (BOOL)hasSound
+{
+    os_unfair_lock_lock(&_lock);
+    NSTimeInterval lastSoundTime = _lastSoundTime;
+    os_unfair_lock_unlock(&_lock);
+    return self.source != nil && lastSoundTime > 0.0 && CACurrentMediaTime() - lastSoundTime < kSoundTimeout;
+}
+
+// YES once sound has arrived from the source connected to
+- (BOOL)wasHeard
+{
+    os_unfair_lock_lock(&_lock);
+    NSTimeInterval lastSoundTime = _lastSoundTime;
+    os_unfair_lock_unlock(&_lock);
+    return self.source != nil && lastSoundTime > 0.0;
 }
 
 - (NSInteger)width
@@ -250,6 +289,11 @@ static const NSTimeInterval kLongestSilenceTimeout = 30.0;
 - (NSUInteger)dropped
 {
     return self.movie.framesDropped;
+}
+
+- (NSTimeInterval)soundWritten
+{
+    return self.movie.soundWritten;
 }
 
 - (NSString *)kindName
@@ -363,7 +407,8 @@ static NSString *StringFrom(NSArray *arguments)
 + (BOOL)automaticallyNotifiesObserversForKey:(NSString *)key
 {
     // These are refreshed together, by -refresh
-    if ([@[@"elapsed", @"frames", @"dropped", @"file", @"assembledFile", @"assembledFrames", @"assembledDropped"] containsObject:key])
+    if ([@[@"elapsed", @"frames", @"dropped", @"file", @"assembledFile", @"assembledFrames", @"assembledDropped",
+           @"assembledSoundWritten", @"soundLeftOut"] containsObject:key])
     {
         return NO;
     }
@@ -397,7 +442,8 @@ static NSString *StringFrom(NSArray *arguments)
             @"RecorderFolder": movies ?: NSHomeDirectory(),
             @"RecorderName": @"",
             @"RecorderOutput": [Take nameForOutput:TakeOutputSeparate],
-            @"RecorderLayout": [Layout nameForKind:LayoutKindRow]
+            @"RecorderLayout": [Layout nameForKind:LayoutKindRow],
+            @"RecorderSound": @""
         }];
         MovieCodec codec;
         NSString *codecName = [defaults stringForKey:@"RecorderCodec"];
@@ -415,6 +461,7 @@ static NSString *StringFrom(NSArray *arguments)
         NSString *layoutName = [defaults stringForKey:@"RecorderLayout"];
         _layout = [Layout getKind:&kind forName:layoutName] ? [layoutName copy] : [Layout nameForKind:LayoutKindRow];
         _gap = MIN(MAX([defaults integerForKey:@"RecorderGap"], 0), kMaximumGap);
+        _sound = [[defaults stringForKey:@"RecorderSound"] ?: @"" copy];
 
         _composeLock = OS_UNFAIR_LOCK_INIT;
         _composePlaces = @[];
@@ -558,6 +605,19 @@ static NSString *StringFrom(NSArray *arguments)
     [self changed];
 }
 
+- (void)setSound:(NSString *)sound
+{
+    // A title which is not a place's is ignored: OSC says why
+    NSString *title = sound.length == 0 ? @"" : [self placeTitleMatching:sound];
+    if (title == nil)
+    {
+        return;
+    }
+    _sound = [title copy];
+    [_defaults setObject:_sound forKey:@"RecorderSound"];
+    [self changed];
+}
+
 - (void)setNdiAvailable:(BOOL)ndiAvailable
 {
     _ndiAvailable = ndiAvailable;
@@ -623,10 +683,26 @@ static NSString *StringFrom(NSArray *arguments)
     return _take.assembledMovie.framesDropped;
 }
 
+- (NSTimeInterval)assembledSoundWritten
+{
+    return _take.assembledMovie.soundWritten;
+}
+
+- (NSTimeInterval)soundLeftOut
+{
+    NSTimeInterval leftOut = 0.0;
+    for (TakeMovie *movie in [self moviesOfTheTake])
+    {
+        leftOut += movie.soundLeftOut;
+    }
+    return leftOut;
+}
+
 // Tells observers about the values which change by themselves
 - (void)refresh
 {
-    NSArray<NSString *> *keys = @[@"elapsed", @"frames", @"dropped", @"file", @"assembledFile", @"assembledFrames", @"assembledDropped"];
+    NSArray<NSString *> *keys = @[@"elapsed", @"frames", @"dropped", @"file", @"assembledFile", @"assembledFrames", @"assembledDropped",
+                                  @"assembledSoundWritten", @"soundLeftOut"];
     for (NSString *key in keys)
     {
         [self willChangeValueForKey:key];
@@ -965,6 +1041,20 @@ static Layout *MonitorLayout(Layout *layout, LayoutKind kind, NSArray *sizes, NS
         }
         [weakSelf place:strongPlace receivedFrameAtTime:now];
     };
+    // The same for its sound, which goes to its movie and, if it is the one chosen, to the assembled movie
+    source.soundHandler = ^(SourceSound *sound) {
+        RecorderPlace *strongPlace = weakPlace;
+        if (strongPlace == nil)
+        {
+            return;
+        }
+        NSTimeInterval now = CACurrentMediaTime();
+        NSUInteger index = [strongPlace receivedSoundAtTime:now];
+        if (index != NSNotFound)
+        {
+            [take appendSound:sound fromSourceAtIndex:index atTime:now];
+        }
+    };
     place.source = source;
 }
 
@@ -982,6 +1072,11 @@ static Layout *MonitorLayout(Layout *layout, LayoutKind kind, NSArray *sizes, NS
     [_defaults setObject:[places valueForKey:@"title"] forKey:@"RecorderSources"];
     [self connectPlaces];
     [self compositionChanged];
+    if (_queryServerStarted)
+    {
+        // The places are the values /sound can take
+        [self registerParameter:_parametersByAddress[@"/sound"]];
+    }
     [self changed];
 }
 
@@ -1024,6 +1119,21 @@ static Layout *MonitorLayout(Layout *layout, LayoutKind kind, NSArray *sizes, NS
         return nil;
     }
     return titles[index];
+}
+
+// The title of the place meant: this title or, failing that, the first which contains it, whatever the case. nil if
+// none does.
+- (NSString *)placeTitleMatching:(NSString *)title
+{
+    NSArray<NSString *> *titles = [self.places valueForKey:@"title"];
+    if ([titles containsObject:title])
+    {
+        return title;
+    }
+    NSUInteger index = [titles indexOfObjectPassingTest:^BOOL(NSString *candidate, NSUInteger idx, BOOL *stop) {
+        return [candidate rangeOfString:title options:NSCaseInsensitiveSearch].location != NSNotFound;
+    }];
+    return index == NSNotFound ? nil : titles[index];
 }
 
 - (NSUInteger)indexOfPlaceWithTitle:(NSString *)title
@@ -1150,6 +1260,24 @@ static Layout *MonitorLayout(Layout *layout, LayoutKind kind, NSArray *sizes, NS
 
 #pragma mark Recording
 
+// What a place's source is: as it was when it connected or, if it never has, as the sources available say. -1 if it
+// cannot be known.
+- (FrameSourceKind)kindOfPlace:(RecorderPlace *)place
+{
+    if (place.kindKnown)
+    {
+        return place.kind;
+    }
+    for (SourceDescription *source in self.availableSources)
+    {
+        if ([source.title isEqualToString:place.title])
+        {
+            return source.kind;
+        }
+    }
+    return (FrameSourceKind)-1;
+}
+
 - (BOOL)failWithError:(NSString *)error
 {
     self.error = error;
@@ -1200,12 +1328,30 @@ static Layout *MonitorLayout(Layout *layout, LayoutKind kind, NSArray *sizes, NS
         name = [NSString stringWithFormat:@"Simple Recorder %@", [formatter stringFromDate:[NSDate date]]];
     }
 
+    // The sources whose movies have a sound track: those which have sound now, and the NDI sources which may bring
+    // it when they come. A movie whose track receives nothing has none in the end.
+    NSMutableIndexSet *soundSources = [NSMutableIndexSet indexSet];
+    [places enumerateObjectsUsingBlock:^(RecorderPlace *place, NSUInteger index, BOOL *stop) {
+        if (place.hasSound || ([self kindOfPlace:place] == FrameSourceKindNDI && ![place wasHeard]))
+        {
+            [soundSources addIndex:index];
+        }
+    }];
+    // The assembled movie takes the sound chosen if its source is one of them; otherwise it has none, which is no error
+    NSUInteger assembledSoundIndex = self.sound.length > 0 ? [self indexOfPlaceWithTitle:self.sound] : NSNotFound;
+    if (![soundSources containsIndex:assembledSoundIndex])
+    {
+        assembledSoundIndex = NSNotFound;
+    }
+
     NSTimeInterval now = CACurrentMediaTime();
     NSError *error = nil;
     if (![_take startWithSourceTitles:[places valueForKey:@"title"]
                                 sizes:sizes
                                output:output
                         assembledSize:layout ? layout.size : NSZeroSize
+                         soundSources:soundSources
+                  assembledSoundIndex:assembledSoundIndex
                                  name:name
                                folder:[NSURL fileURLWithPath:self.folder isDirectory:YES]
                              settings:settings
@@ -1221,7 +1367,8 @@ static Layout *MonitorLayout(Layout *layout, LayoutKind kind, NSArray *sizes, NS
         BOOL hasMovie = index < movies.count;
         place.movie = hasMovie ? movies[index] : nil;
         place.inTake = hasMovie;
-        [place setTakeIndex:hasMovie ? index : NSNotFound];
+        // Its sound may go to the assembled movie all the same
+        [place setTakeIndex:index hasMovie:hasMovie];
     }];
     os_unfair_lock_lock(&_composeLock);
     _takeLayout = layout;
@@ -1261,7 +1408,7 @@ static Layout *MonitorLayout(Layout *layout, LayoutKind kind, NSArray *sizes, NS
     _lastElapsed = now - _startTime;
     for (RecorderPlace *place in self.places)
     {
-        [place setTakeIndex:NSNotFound];
+        [place setTakeIndex:NSNotFound hasMovie:NO];
     }
     os_unfair_lock_lock(&_composeLock);
     _takeLayout = nil;
@@ -1552,6 +1699,27 @@ static Layout *MonitorLayout(Layout *layout, LayoutKind kind, NSArray *sizes, NS
     };
     [parameters addObject:layout];
 
+    RecorderParameter *sound = [self parameter:@"/sound" type:@"s" summary:@"The source whose sound the assembled movie takes: its title, or part of it. It must be one of the sources chosen. Empty for none."];
+    sound.range = ^{
+        NSArray<NSString *> *titles = [weakSelf.places valueForKey:@"title"] ?: @[];
+        return @[@{@"VALS": [titles arrayByAddingObject:@""]}];
+    };
+    sound.get = ^{ return @[weakSelf.sound ?: @""]; };
+    sound.set = ^NSString *(NSArray *arguments) {
+        NSString *title = StringFrom(arguments);
+        if (title == nil)
+        {
+            return @"expects the title of a source chosen, or an empty string";
+        }
+        if (title.length > 0 && [weakSelf placeTitleMatching:title] == nil)
+        {
+            return [NSString stringWithFormat:@"“%@” is not one of the sources chosen", title];
+        }
+        weakSelf.sound = title;
+        return nil;
+    };
+    [parameters addObject:sound];
+
     RecorderParameter *assembledWidth = [self parameter:@"/status/assembled/width" type:@"i" summary:@"Width of the assembled picture as it is now, or of the take being recorded"];
     assembledWidth.get = ^{ return @[@(weakSelf.places.count > 0 ? (NSInteger)weakSelf.assembledLayout.size.width : 0)]; };
     RecorderParameter *assembledHeight = [self parameter:@"/status/assembled/height" type:@"i" summary:@"Height of the assembled picture as it is now, or of the take being recorded"];
@@ -1582,7 +1750,11 @@ static Layout *MonitorLayout(Layout *layout, LayoutKind kind, NSArray *sizes, NS
         [self statusParameter:@"/status/file" type:@"s" summary:@"The assembled movie or, if there is none, the first source's: being written or last written" key:@"file"],
         [self statusParameter:@"/status/error" type:@"s" summary:@"The last error. Empty when a recording starts." key:@"error"],
         [self statusParameter:@"/status/failure" type:@"s" summary:@"Why the last recording ended, if it failed or had nothing to write. Empty otherwise."
-                          key:@"recordingError"]
+                          key:@"recordingError"],
+        [self statusParameter:@"/status/sound/written" type:@"f" summary:@"Seconds of sound in the assembled movie, being written or last written"
+                          key:@"assembledSoundWritten"],
+        [self statusParameter:@"/status/sound/leftout" type:@"f" summary:@"Seconds of sound left out of the movies of the recording, being written or last written, because the encoder could not keep up"
+                          key:@"soundLeftOut"]
     ]];
 
     RecorderParameter *ndi = [self parameter:@"/status/ndi" type:@"i" summary:@"1 if NDI is available: its library is installed. Without it there are no NDI sources, which is not an error."];
@@ -1612,7 +1784,8 @@ static Layout *MonitorLayout(Layout *layout, LayoutKind kind, NSArray *sizes, NS
             [self placeStatusParameter:@"file" place:place type:@"s" summary:@"The source's movie, being written or last written" key:@"file"],
             [self placeStatusParameter:@"frames" place:place type:@"i" summary:@"Frames written to the source's movie" key:@"frames"],
             [self placeStatusParameter:@"dropped" place:place type:@"i" summary:@"Frames of the source lost because the encoder could not keep up" key:@"dropped"],
-            [self placeStatusParameter:@"kind" place:place type:@"s" summary:@"What the source is: syphon or ndi. Empty until it has been connected to." key:@"kindName"]
+            [self placeStatusParameter:@"kind" place:place type:@"s" summary:@"What the source is: syphon or ndi. Empty until it has been connected to." key:@"kindName"],
+            [self placeStatusParameter:@"sound" place:place type:@"i" summary:@"1 if the source is delivering sound" key:@"hasSound"]
         ]];
     }
 

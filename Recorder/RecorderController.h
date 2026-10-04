@@ -63,6 +63,10 @@ extern const NSUInteger RecorderMaximumPlaces;
 // What its source is, learned when it connects and kept when the source goes away
 @property (readonly) FrameSourceKind kind;
 @property (readonly, copy) NSString *kindName;    // /status/source/N/kind: "syphon", "ndi"; empty if never connected
+// /status/source/N/sound: YES if its source is delivering sound (a piece arrived in the last three seconds)
+@property (readonly) BOOL hasSound;
+// Seconds of sound in its movie, of the take being recorded or of the last
+@property (readonly) NSTimeInterval soundWritten;
 @end
 
 /*
@@ -93,6 +97,11 @@ extern const NSUInteger RecorderMaximumPlaces;
 @property (nonatomic, copy) NSString *output;     // /output: one of +[Take outputNames]: "separate", "assembled", "both"
 @property (nonatomic, copy) NSString *layout;     // /layout: one of +[Layout kindNames]: "row", "column", "grid", "focus"
 @property (nonatomic, assign) NSInteger gap;      // /gap: pixels between sources in the assembled picture
+// /sound: the title of the source whose sound goes in the assembled movie; empty for none. Set with a title or a part
+// of one, as a place is: it must be one of the sources chosen, and a name which matches none changes nothing. The
+// full title is kept, even when its source is no longer chosen: the assembled movie then has no sound, which is no
+// error, and it applies again if the source is chosen again. A change applies to the next take.
+@property (nonatomic, copy) NSString *sound;
 
 // The sources chosen, in order: /source/1 … /source/8 (and /source, which is /source/1). They are saved in the
 // defaults. Only these are connected to. They cannot be changed while recording.
@@ -133,6 +142,10 @@ extern const NSUInteger RecorderMaximumPlaces;
 @property (readonly, copy) NSString *assembledFile;             // /status/assembled/file: empty if there is none
 @property (readonly) NSUInteger assembledFrames;                // /status/assembled/frames
 @property (readonly) NSUInteger assembledDropped;               // /status/assembled/dropped
+// /status/sound/written: seconds of sound in the assembled movie of the take being recorded, or of the last
+@property (readonly) NSTimeInterval assembledSoundWritten;
+// /status/sound/leftout: seconds of sound left out of all the movies of that take, the encoder being late
+@property (readonly) NSTimeInterval soundLeftOut;
 @property (nonatomic, readonly, copy) NSString *error; // /status/error: the last error, empty when a recording starts
 // How many errors there have been: it changes when an error happens again, which error alone does not show
 @property (readonly) NSUInteger errorCount;
@@ -140,7 +153,9 @@ extern const NSUInteger RecorderMaximumPlaces;
 // otherwise, and when a recording starts. Unlike error, a message which was refused meanwhile does not change it.
 @property (readonly, copy) NSString *recordingError;
 
-// Starts recording the sources chosen. Returns NO, with the reason in error, if it could not.
+// Starts recording the sources chosen. Returns NO, with the reason in error, if it could not. The movies of the places
+// which have sound have a sound track, and those of the NDI places whose source is away or has not been heard yet,
+// as it may bring sound when it comes: a track which receives none is not written.
 - (BOOL)start;
 // handler is called once the movies are finished, or at once if there is no recording
 - (void)stopWithCompletionHandler:(nullable void (^)(void))handler;
