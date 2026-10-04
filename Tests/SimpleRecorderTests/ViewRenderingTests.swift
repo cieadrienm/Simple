@@ -145,4 +145,35 @@ final class ViewRenderingTests: XCTestCase {
         XCTAssertEqual(model.places.map(\.isOnline), [true, false, true])
         XCTAssertGreaterThan(colours(try render("7-one-away")), 8)
     }
+
+    // MARK: NDI
+
+    private func useNDISources(available: Bool) throws {
+        recorder.cleanUp()
+        recorder = try TestRecorder(ndi: ["STUDIO (Camera 1)", "STUDIO (Camera 2)"])
+        recorder.controller.ndiAvailable = available
+        model = RecorderModel(controller: recorder.controller, errorDisplayTime: 30,
+                              ndiOffReason: available ? "" : "libndi.dylib was not found")
+    }
+
+    func testTheWindowWithNDISources() throws {
+        try useNDISources(available: true)
+        model.tick("A - Simple Server")
+        model.tick("STUDIO (Camera 1)")
+        spin(0.3)
+        XCTAssertEqual(model.places.map(\.kind), ["syphon", "ndi"])
+        XCTAssertGreaterThan(colours(try render("8-ndi-sources")), 8)
+    }
+
+    func testTheWindowWithoutNDI() throws {
+        try useNDISources(available: false)
+        model.tick("A - Simple Server")
+        send("/fps", NSNumber(value: 30))
+        XCTAssertFalse(model.ndiAvailable)
+        XCTAssertGreaterThan(colours(try render("9-ndi-off")), 8)
+    }
+
+    private func send(_ address: String, _ arguments: Any...) {
+        recorder.controller.handle(OSCMessage(address: address, arguments: arguments))
+    }
 }

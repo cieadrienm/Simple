@@ -76,8 +76,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard let device = MTLCreateSystemDefaultDevice() else { fatalError("Simple Recorder needs Metal") }
         // Simple Recorder was Simple Client: its settings are taken over, once
         SettingsMigration.migrate(from: SettingsMigration.oldDomain, to: .standard, domain: Bundle.main.bundleIdentifier ?? "net.am-cb.simple-recorder")
-        let controller = RecorderController(device: device, directory: SyphonDirectory(), defaults: .standard)
-        model = RecorderModel(controller: controller)
+        // NDI works only if its library was found: a missing library is a state, not an error
+        let ndi = NDILibrary.shared()
+        let directory = CompositeDirectory(directories: [SyphonDirectory(), NDIDirectory(library: ndi)])
+        let controller = RecorderController(device: device, directory: directory, defaults: .standard)
+        controller.ndiAvailable = ndi.isAvailable
+        if ndi.isAvailable {
+            NSLog("NDI is on: %@ (%@)", ndi.version, ndi.path ?? "")
+        } else {
+            NSLog("NDI is off: %@", ndi.reason)
+        }
+        model = RecorderModel(controller: controller, ndiOffReason: ndi.reason)
         super.init()
     }
 

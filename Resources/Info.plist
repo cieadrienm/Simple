@@ -31,8 +31,9 @@
 	<key>NSBonjourServices</key>
 	<array>
 		<string>_oscjson._tcp</string>
+		<string>_ndi._tcp</string>
 	</array>
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>Simple Recorder can be controlled over the network with OSC, and announces itself to OSCQuery applications.</string>
+	<string>Simple Recorder can be controlled over the network with OSC, and announces itself to OSCQuery applications. NDI sources are found on the network.</string>
 </dict>
 </plist>

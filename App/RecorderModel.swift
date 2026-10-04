@@ -48,6 +48,8 @@ final class RecorderModel: ObservableObject {
         var file: String
         var frames: Int
         var dropped: Int
+        /// "syphon" or "ndi"; empty while the place has never been connected
+        var kind: String
     }
 
     /// A source which can be chosen
@@ -55,9 +57,13 @@ final class RecorderModel: ObservableObject {
         var id: String { title }
         var title: String
         var detail: String
+        /// "syphon" or "ndi"
+        var kind: String
     }
 
     let controller: RecorderController
+    /// Why NDI is off, for the status bar's tool tip (the library knows; the views do not touch it)
+    let ndiOffReason: String
 
     @Published private(set) var state = "idle"
     @Published private(set) var elapsed: TimeInterval = 0
@@ -89,6 +95,8 @@ final class RecorderModel: ObservableObject {
     @Published private(set) var titleRects: [CGRect] = []
     @Published private(set) var assembledFrames = 0
     @Published private(set) var assembledDropped = 0
+    /// Whether NDI's library is loaded: without it NDI sources are not listed
+    @Published private(set) var ndiAvailable = false
     @Published private(set) var oscPort = 0
     @Published private(set) var oscQueryPort = 0
     /// Bytes free on the disk of the folder, nil if it cannot be told
@@ -123,8 +131,9 @@ final class RecorderModel: ObservableObject {
     private var observer: NSObjectProtocol?
     private var lastSpaceCheck = Date.distantPast
 
-    init(controller: RecorderController, errorDisplayTime: TimeInterval = 6) {
+    init(controller: RecorderController, errorDisplayTime: TimeInterval = 6, ndiOffReason: String = "") {
         self.controller = controller
+        self.ndiOffReason = ndiOffReason
         self.errorDisplayTime = errorDisplayTime
         lastErrorCount = controller.errorCount
         observer = NotificationCenter.default.addObserver(forName: .RecorderControllerDidChange, object: controller, queue: nil) { [weak self] _ in
@@ -161,13 +170,14 @@ final class RecorderModel: ObservableObject {
         set(\.height, controller.height)
         set(\.assembledFrames, Int(controller.assembledFrames))
         set(\.assembledDropped, Int(controller.assembledDropped))
+        set(\.ndiAvailable, controller.ndiAvailable)
         set(\.oscPort, controller.oscPort)
         set(\.oscQueryPort, controller.oscQueryPort)
         set(\.failure, controller.recordingError)
 
         let chosen = controller.places.map {
             Place(title: $0.title, isOnline: $0.isOnline, width: $0.width, height: $0.height, fps: ($0.fps * 10).rounded() / 10,
-                  file: $0.file, frames: Int($0.frames), dropped: Int($0.dropped))
+                  file: $0.file, frames: Int($0.frames), dropped: Int($0.dropped), kind: $0.kindName)
         }
         set(\.places, chosen)
         let picture = controller.assembledLayout
@@ -178,10 +188,14 @@ final class RecorderModel: ObservableObject {
             return CGRect(x: rect.minX / size.width, y: rect.minY / size.height, width: rect.width / size.width, height: rect.height / size.height)
         })
         let titles = Set(chosen.map(\.title))
-        set(\.available, controller.availableSources.filter { !titles.contains($0.title) }.map { Source(title: $0.title, detail: $0.detail) })
+        set(\.available, controller.availableSources.filter { !titles.contains($0.title) }.map { Source(title: $0.title, detail: $0.detail, kind: Self.kindName($0.kind)) })
 
         showError(controller.error)
         checkSpace()
+    }
+
+    private static func kindName(_ kind: FrameSourceKind) -> String {
+        kind == .NDI ? "ndi" : "syphon"
     }
 
     /// A new error is shown for a while; why a recording ended is `failure`, which stays.

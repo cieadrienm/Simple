@@ -41,6 +41,9 @@ struct StatusBar: View {
             } else {
                 Text("OSC is not available")
             }
+            Text(model.ndiAvailable ? "NDI on" : "NDI off")
+                .foregroundStyle(Theme.textDim)
+                .help(model.ndiAvailable ? "" : model.ndiOffReason)
             Spacer()
             if !model.failure.isEmpty {
                 Text(model.failure).foregroundStyle(Theme.record).lineLimit(1)

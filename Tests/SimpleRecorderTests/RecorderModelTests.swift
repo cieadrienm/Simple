@@ -259,4 +259,32 @@ final class RecorderModelTests: XCTestCase {
         let deadline = Date().addingTimeInterval(10)
         while model.isRecording && Date() < deadline { spin(0.02) }
     }
+
+    // MARK: NDI
+
+    func testASourcesKindFollowsItsDirectory() throws {
+        recorder.cleanUp()
+        recorder = try TestRecorder(ndi: ["HOST (cam 1)", "HOST (cam 2)"])
+        model = RecorderModel(controller: recorder.controller)
+        XCTAssertEqual(model.available.filter { $0.kind == "ndi" }.map(\.title), ["HOST (cam 1)", "HOST (cam 2)"])
+        XCTAssertEqual(model.available.filter { $0.kind == "syphon" }.count, TestRecorder.titles.count)
+        model.tick("A - Simple Server")
+        model.tick("HOST (cam 2)")
+        XCTAssertEqual(model.places.map(\.kind), ["syphon", "ndi"])
+        XCTAssertEqual(model.available.filter { $0.kind == "ndi" }.map(\.title), ["HOST (cam 1)"])
+    }
+
+    func testNDIAvailabilityFollowsTheController() {
+        XCTAssertFalse(model.ndiAvailable)
+        recorder.controller.ndiAvailable = true
+        // The controller says nothing when this changes: the model reads it with the next change
+        send("/fps", NSNumber(value: 25))
+        XCTAssertTrue(model.ndiAvailable)
+    }
+
+    func testTheReasonNDIIsOffIsPassedToTheModel() {
+        let other = RecorderModel(controller: recorder.controller, ndiOffReason: "libndi.dylib was not found")
+        XCTAssertEqual(other.ndiOffReason, "libndi.dylib was not found")
+        XCTAssertEqual(model.ndiOffReason, "")
+    }
 }

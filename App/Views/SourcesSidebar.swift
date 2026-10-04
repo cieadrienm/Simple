@@ -37,7 +37,7 @@ struct SourcesSidebar: View {
         List {
             Section {
                 ForEach(Array(model.places.enumerated()), id: \.element.id) { index, place in
-                    SourceRow(title: place.title, detail: detail(place), isChosen: true, isDimmed: !place.isOnline) {
+                    SourceRow(title: place.title, detail: detail(place), isNDI: place.kind == "ndi", isChosen: true, isDimmed: !place.isOnline) {
                         model.untick(place: index + 1)
                     }
                 }
@@ -55,7 +55,7 @@ struct SourcesSidebar: View {
             if !model.available.isEmpty {
                 Section {
                     ForEach(model.available) { source in
-                        SourceRow(title: source.title, detail: source.detail, isChosen: false, isDimmed: false) {
+                        SourceRow(title: source.title, detail: source.detail, isNDI: source.kind == "ndi", isChosen: false, isDimmed: false) {
                             model.tick(source.title)
                         }
                     }
@@ -80,6 +80,7 @@ struct SourcesSidebar: View {
 struct SourceRow: View {
     let title: String
     let detail: String
+    let isNDI: Bool
     let isChosen: Bool
     let isDimmed: Bool
     let toggle: () -> Void
@@ -93,6 +94,14 @@ struct SourceRow: View {
             VStack(alignment: .leading, spacing: 1) {
                 Text(title).font(.system(size: 12)).foregroundStyle(isDimmed ? Theme.textDim : Theme.text).lineLimit(1)
                 Text(detail).font(Theme.mono(10)).foregroundStyle(Theme.textFaint).lineLimit(1)
+            }
+            if isNDI {
+                Spacer(minLength: 4)
+                // Tells NDI sources from Syphon's at a glance
+                Text("NDI").font(Theme.mono(9, .medium)).foregroundStyle(Theme.accent)
+                    .padding(.horizontal, 4).padding(.vertical, 1)
+                    .overlay(RoundedRectangle(cornerRadius: 3).stroke(Theme.accent.opacity(0.6), lineWidth: 1))
+                    .accessibilityLabel("NDI source")
             }
         }
         .padding(.vertical, 2)

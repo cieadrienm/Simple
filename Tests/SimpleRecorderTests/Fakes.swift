@@ -33,10 +33,20 @@ final class FakeDirectory: NSObject, SourceDirectory {
     /// Every source ever connected to, the latest last
     private(set) var connections: [FakeSource] = []
 
-    init(_ titles: [String]) { self.titles = titles }
+    /// The titles which are NDI sources: the others are Syphon's
+    let ndiTitles: Set<String>
+
+    init(_ titles: [String], ndi: Set<String> = []) {
+        self.titles = titles
+        ndiTitles = ndi
+    }
 
     func availableSources() -> [SourceDescription] {
-        titles.map { SourceDescription(title: $0, detail: $0.hasSuffix("eMotion") ? "eMotion" : "Simple Server", kind: .syphon) }
+        titles.map {
+            ndiTitles.contains($0)
+                ? SourceDescription(title: $0, detail: "NDI", kind: .NDI)
+                : SourceDescription(title: $0, detail: $0.hasSuffix("eMotion") ? "eMotion" : "Simple Server", kind: .syphon)
+        }
     }
 
     func connectToSource(withTitle title: String, device: MTLDevice) -> FrameSource? {
@@ -80,12 +90,12 @@ struct TestRecorder {
 
     static let titles = ["main view - eMotion", "depthMap - eMotion", "A - Simple Server", "B - Simple Server"]
 
-    init() throws {
+    init(ndi: [String] = []) throws {
         device = MTLCreateSystemDefaultDevice()!
         folder = FileManager.default.temporaryDirectory.appendingPathComponent("SimpleRecorderTests-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         defaultsName = "SimpleRecorderTests-\(UUID().uuidString)"
-        directory = FakeDirectory(Self.titles)
+        directory = FakeDirectory(Self.titles + ndi, ndi: Set(ndi))
         controller = RecorderController(device: device, directory: directory, defaults: UserDefaults(suiteName: defaultsName)!)
         controller.folder = folder.path
     }

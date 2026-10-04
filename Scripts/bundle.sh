@@ -4,6 +4,7 @@
 #   Scripts/bundle.sh             build/Simple Recorder.app and build/Simple Server.app
 #   INSTALL=1 Scripts/bundle.sh   also copies them to /Applications
 #   SIGN_IDENTITY="Developer ID Application: …" Scripts/bundle.sh   signs with that identity ("-" for ad hoc)
+#   NDI_LIBRARY=<path to libndi.dylib> Scripts/bundle.sh   puts that NDI library in the app (default: the NDI SDK's)
 #
 # Simple Recorder is a SwiftPM executable (the SwiftUI app in App/, the core in Recorder/), put in a bundle here
 # with Syphon's framework and the MCP tool. Simple Server is built from its Xcode project.
@@ -26,6 +27,16 @@ ditto build/Syphon.xcframework/macos-arm64_x86_64/Syphon.framework "$APP/Content
 # SwiftPM looks for Syphon beside the executable: in a bundle it is in Frameworks
 install_name_tool -add_rpath "@executable_path/../Frameworks" "$APP/Contents/MacOS/Simple Recorder"
 
+# NDI's library goes in the app when we have it; without it the app works, and does not list NDI sources
+NDI_LIBRARY="${NDI_LIBRARY:-/Library/NDI SDK for Apple/lib/macOS/libndi.dylib}"
+HAS_NDI=0
+if [ -f "$NDI_LIBRARY" ]; then
+    cp "$NDI_LIBRARY" "$APP/Contents/Frameworks/libndi.dylib"
+    HAS_NDI=1
+else
+    echo "NDI's library was not found: the app is built without it" >&2
+fi
+
 DERIVED="build/DerivedData"
 xcodebuild -workspace Simple.xcworkspace -scheme "Simple Server" -configuration Release \
     -destination 'generic/platform=macOS' -derivedDataPath "$DERIVED" build -quiet
@@ -41,6 +52,10 @@ if [ -z "${SIGN_IDENTITY:-}" ]; then
     [ -n "$SIGN_IDENTITY" ] || SIGN_IDENTITY="-"
 fi
 sign() {
+    # The library is signed before the app, which seals it
+    if [ "$HAS_NDI" = "1" ]; then
+        codesign --force --timestamp=none --sign "$1" "$APP/Contents/Frameworks/libndi.dylib"
+    fi
     codesign --force --timestamp=none --sign "$1" "$APP/Contents/Frameworks/Syphon.framework/Versions/A" \
         "$APP/Contents/MacOS/simple-recorder-mcp" "$APP" \
         "build/Simple Server.app/Contents/Frameworks/Syphon.framework/Versions/A" "build/Simple Server.app"
