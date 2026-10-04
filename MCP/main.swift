@@ -84,18 +84,21 @@ struct Recorder {
     /// The recorder as the tools report it.
     func status() throws -> [String: Any] {
         let (values, sources) = try read()
+        // One title per line: the NDI sources which are available. Any other title in the list is a Syphon server
+        let ndiTitles = Set((values["/status/ndi/sources"] as? String ?? "").split(separator: "\n").map(String.init))
         func value(_ path: String) -> Any { values[path] ?? NSNull() }
         var places: [[String: Any]] = []
         for place in 1...Self.maximumPlaces {
             guard let title = values["/source/\(place)"] as? String, !title.isEmpty else { continue }
             let status = "/status/source/\(place)/"
-            places.append(["place": place, "title": title, "online": (value(status + "online") as? NSNumber)?.boolValue ?? false,
+            places.append(["place": place, "title": title, "kind": value(status + "kind"), "online": (value(status + "online") as? NSNumber)?.boolValue ?? false,
                            "width": value(status + "width"), "height": value(status + "height"), "fps": value(status + "fps"),
                            "file": value(status + "file"), "frames": value(status + "frames"), "dropped": value(status + "dropped")])
         }
         return [
             "sources": places,
-            "sourcesAvailable": sources,
+            "ndi": (values["/status/ndi"] as? NSNumber)?.boolValue ?? false,
+            "sourcesAvailable": sources.map { ["title": $0, "kind": ndiTitles.contains($0) ? "ndi" : "syphon"] },
             "settings": ["codec": value("/codec"), "fps": value("/fps"), "bitrate": value("/bitrate"), "folder": value("/folder"), "name": value("/name"),
                          "output": value("/output"), "layout": value("/layout"), "gap": value("/gap"), "width": value("/width"), "height": value("/height")],
             // The assembled picture as it is now, and the assembled movie of the take being recorded or of the last one
@@ -322,8 +325,8 @@ func schema(_ properties: [String: Any]) -> [String: Any] {
 }
 
 let settingsProperties: [String: Any] = [
-    "sources": ["type": "array", "items": ["type": "string"], "description": "The sources to record, in order: their titles, or part of them (see sourcesAvailable in recorder_status). Up to 8. Replaces those chosen."],
-    "source": ["type": "string", "description": "One source to record, alone: the same as sources with one title"],
+    "sources": ["type": "array", "items": ["type": "string"], "description": "The sources to record, in order: their titles, or part of them (see sourcesAvailable in recorder_status); they may be Syphon servers or NDI sources. Up to 8. Replaces those chosen."],
+    "source": ["type": "string", "description": "One source (a Syphon server or an NDI source) to record, alone: the same as sources with one title"],
     "codec": ["type": "string", "enum": ["h264", "hevc", "prores422", "prores4444"], "description": "The same for every movie. prores4444 keeps transparency"],
     "fps": ["type": "number", "description": "The most frames per second in the movie. 0: every frame of the source."],
     "bitrate": ["type": "number", "description": "Megabits per second, for h264 and hevc. 0: chosen from the size and frame rate."],
@@ -338,8 +341,8 @@ let settingsProperties: [String: Any] = [
 
 let tools: [[String: Any]] = [
     ["name": "recorder_status",
-     "description": "The state of Simple Recorder: the sources chosen for recording, in order, with what each delivers (online, size, frame rate) and its movie "
-        + "(file, frames written and dropped); the sources which can be chosen (sourcesAvailable); the settings, among them what a recording writes "
+     "description": "The state of Simple Recorder: the sources chosen for recording, in order, with each one's kind (syphon or ndi) and what it delivers (online, size, frame rate) and its movie "
+        + "(file, frames written and dropped); the sources which can be chosen (sourcesAvailable: a list of {title, kind}, kind being syphon or ndi; it was a list of titles before NDI sources came); whether NDI is usable (ndi: false when NDI's library is not installed, which only leaves NDI sources out); the settings, among them what a recording writes "
         + "(output: separate | assembled | both) and how the sources are assembled (layout, gap, width, height); the assembled picture's size now and "
         + "the assembled movie (assembled: width, height, file, frames, dropped); whether it is recording "
         + "(state: idle | recording | finishing) and for how long; the last error (error: a refused message, a recording which could not start), "
@@ -396,7 +399,7 @@ while let line = readLine(strippingNewline: true) {
         result = ["protocolVersion": params["protocolVersion"] as? String ?? "2024-11-05",
                   "capabilities": ["tools": [:] as [String: Any]],
                   "serverInfo": ["name": "simple-recorder", "version": Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "dev"],
-                  "instructions": "Controls the Simple Recorder app, which records several Syphon sources at once: each to its own movie file, all assembled in one movie "
+                  "instructions": "Controls the Simple Recorder app, which records several Syphon and NDI sources at once: each to its own movie file, all assembled in one movie "
                     + "(side by side, stacked, mosaic), or both. "
                     + "Call recorder_status first to see the sources and settings; recorder_configure chooses the sources; recorder_start and recorder_stop record."]
     case "ping": result = [:]
