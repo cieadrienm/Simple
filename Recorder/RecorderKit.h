@@ -40,3 +40,4 @@
 #import "FrameSource.h"
 #import "RecorderController.h"
 #import "NDILibrary.h"
+#import "NDITextureRing.h"
