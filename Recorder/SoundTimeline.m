@@ -34,6 +34,8 @@
 static const double Tolerance = 0.1;
 // The longest piece of silence given at once, in seconds
 static const double LongestSilence = 10.0;
+// The farthest from the stream's end a piece may be placed, in seconds: beyond it the time given is taken as wrong
+static const double Reach = 24 * 3600.0;
 
 /*
  The stream is a series of runs, one for each sample rate it has had in turn. Within a run everything is counted in
@@ -50,6 +52,8 @@ static const double LongestSilence = 10.0;
     // Of the runs before it
     NSTimeInterval _silenceBefore;
     NSTimeInterval _leftOutBefore;
+    // The longest piece of silence at the run's rate, given again for every long one
+    SourceSound *_longestSilence;
 }
 
 - (instancetype)initWithOrigin:(NSTimeInterval)origin
@@ -86,29 +90,44 @@ static const double LongestSilence = 10.0;
     _silence = 0;
     _leftOut = 0;
     _rate = rate;
+    _longestSilence = nil;
 }
 
 - (NSArray<SourceSound *> *)piecesForSound:(SourceSound *)sound arrivedAtTime:(NSTimeInterval)time
 {
+    // Where the piece belongs, in seconds from the origin
+    NSTimeInterval place = time - sound.duration - _origin;
+    if (!isfinite(place) || fabs(place - self.writtenDuration) > Reach)
+    {
+        return @[];
+    }
     if (sound.sampleRate != _rate)
     {
         [self startRunAtRate:sound.sampleRate];
     }
 
     long long frameCount = (long long)sound.frameCount;
-    // Where the piece belongs, in samples of this run, and how far that is from the stream's end
-    NSTimeInterval place = time - sound.duration - _origin;
+    // How far the piece's place is from the stream's end, in samples of this run
     long long error = llround((place - _runStart) * _rate) - _written;
     long long tolerance = llround(Tolerance * _rate);
 
     if (error > tolerance)
     {
-        // Late: silence fills the hole
+        // Late: silence fills the hole, the longest pieces all one and the same
         NSMutableArray<SourceSound *> *pieces = [NSMutableArray array];
         long long longest = llround(LongestSilence * _rate);
-        for (long long left = error; left > 0; left -= longest)
+        long long left = error;
+        for (; left >= longest; left -= longest)
         {
-            [pieces addObject:[SourceSound silenceOfFrameCount:(NSUInteger)MIN(left, longest) sampleRate:_rate]];
+            if (_longestSilence == nil)
+            {
+                _longestSilence = [SourceSound silenceOfFrameCount:(NSUInteger)longest sampleRate:_rate];
+            }
+            [pieces addObject:_longestSilence];
+        }
+        if (left > 0)
+        {
+            [pieces addObject:[SourceSound silenceOfFrameCount:(NSUInteger)left sampleRate:_rate]];
         }
         [pieces addObject:sound];
         _silence += error;

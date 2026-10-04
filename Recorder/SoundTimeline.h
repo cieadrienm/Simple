@@ -51,7 +51,9 @@ NS_ASSUME_NONNULL_BEGIN
 // usually the piece itself; silence then the piece when sound is late by more than the tolerance (it starts late,
 // it was away, it was left out); the piece less its first samples, or nothing, when it is early by more.
 // A piece which ends before the origin gives nothing. A change of sample rate starts a new run at the time given.
-// Silence comes in pieces of no more than 10 s.
+// Silence comes in pieces of no more than 10 s (those of 10 s are one and the same, so that a long one costs one
+// buffer). A time which is not a number, or which would place the piece more than 24 hours from the stream's end,
+// is taken as wrong: it gives nothing and changes nothing.
 - (NSArray<SourceSound *> *)piecesForSound:(SourceSound *)sound arrivedAtTime:(NSTimeInterval)time;
 // Where the next sample goes, in seconds from the origin
 @property (readonly) NSTimeInterval writtenDuration;

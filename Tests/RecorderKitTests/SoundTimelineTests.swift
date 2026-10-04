@@ -210,6 +210,86 @@ final class SoundTimelineTests: XCTestCase {
                        accuracy: 1e-6)
     }
 
+    /// A timeline which has written ten pieces of 1024 frames on time, and the time the next one is due.
+    private func onTime(origin: Double) -> (SoundTimeline, Double) {
+        let timeline = SoundTimeline(origin: origin)
+        let sound = piece(1024)
+        var due = origin
+        for _ in 0..<10 {
+            due += sound.duration
+            XCTAssertEqual(feed(timeline, sound, at: due).count, 1)
+        }
+        return (timeline, due + sound.duration)
+    }
+
+    func testTheToleranceIsATenthOfASecondEitherWay() {
+        let sound = piece(1024)
+
+        var (timeline, due) = onTime(origin: 3)
+        var pieces = feed(timeline, sound, at: due + 0.09)
+        XCTAssertEqual(pieces.count, 1)
+        XCTAssertTrue(pieces[0] === sound)
+        XCTAssertEqual(timeline.silenceAdded, 0)
+
+        (timeline, due) = onTime(origin: 3)
+        pieces = feed(timeline, sound, at: due + 0.11)
+        XCTAssertEqual(pieces.count, 2)
+        XCTAssertEqual(pieces[0].frameCount, 5280)
+        XCTAssertTrue(isSilence(pieces[0]))
+        XCTAssertTrue(pieces[1] === sound)
+        XCTAssertEqual(timeline.silenceAdded, 0.11, accuracy: 1e-12)
+
+        let long = piece(48000)
+        (timeline, due) = onTime(origin: 3)
+        pieces = feed(timeline, long, at: due - sound.duration + long.duration - 0.09)
+        XCTAssertEqual(pieces.count, 1)
+        XCTAssertTrue(pieces[0] === long)
+        XCTAssertEqual(timeline.soundLeftOut, 0)
+
+        (timeline, due) = onTime(origin: 3)
+        pieces = feed(timeline, long, at: due - sound.duration + long.duration - 0.11)
+        XCTAssertEqual(pieces.count, 1)
+        XCTAssertEqual(pieces[0].frameCount, 48000 - 5280)
+        XCTAssertEqual(pieces[0].samples[0], 5281)
+        XCTAssertEqual(timeline.soundLeftOut, 0.11, accuracy: 1e-12)
+    }
+
+    func testAnHourAwayCostsOneBufferOfSilence() {
+        let (timeline, due) = onTime(origin: 0)
+        let sound = piece(1024)
+        let start = Date()
+        let pieces = feed(timeline, sound, at: due + 3600.5)
+        XCTAssertLessThan(Date().timeIntervalSince(start), 0.5)
+        XCTAssertTrue(pieces.last === sound)
+        let silences = pieces.dropLast()
+        XCTAssertEqual(frames(Array(silences)), Int(3600.5 * rate))
+        XCTAssertTrue(silences.allSatisfy { $0.frameCount <= 480000 })
+        // The full pieces of silence are one and the same, so an hour holds no more than two buffers
+        XCTAssertLessThanOrEqual(Set(silences.map { ObjectIdentifier($0) }).count, 2)
+        XCTAssertTrue(isSilence(silences[0]))
+        XCTAssertTrue(isSilence(silences[silences.count - 1]))
+        XCTAssertEqual(timeline.silenceAdded, 3600.5, accuracy: 1e-9)
+    }
+
+    func testATimeOutOfReachIsIgnored() {
+        let sound = piece(1024)
+        let (timeline, due) = onTime(origin: 0)
+        let written = timeline.writtenDuration
+        for time in [Double.infinity, -Double.infinity, Double.nan, 1e300, -1e300] {
+            let start = Date()
+            XCTAssertEqual(timeline.pieces(for: sound, arrivedAtTime: time).count, 0)
+            XCTAssertLessThan(Date().timeIntervalSince(start), 0.1)
+            XCTAssertEqual(timeline.writtenDuration, written)
+            XCTAssertEqual(timeline.silenceAdded, 0)
+            XCTAssertEqual(timeline.soundLeftOut, 0)
+        }
+        // Still usable: the next ordinary piece follows
+        let pieces = feed(timeline, sound, at: due)
+        XCTAssertEqual(pieces.count, 1)
+        XCTAssertTrue(pieces[0] === sound)
+        XCTAssertEqual(timeline.writtenDuration, written + sound.duration, accuracy: 1e-12)
+    }
+
     func testAChangeOfRateStartsAgainOnTheClock() {
         let origin = 50.0
         let timeline = SoundTimeline(origin: origin)

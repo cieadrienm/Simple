@@ -61,6 +61,17 @@ final class SourceSoundTests: XCTestCase {
         XCTAssertNil(SourceSound(interleavedStereoSamples: planes, frameCount: 4, sampleRate: .nan))
     }
 
+    func testTheStrideIsReadOnlyForSeveralChannels() throws {
+        let planes = [Float](repeating: 0.5, count: 8)
+        // One channel: the stride is not used, 0 is fine
+        let mono = try XCTUnwrap(SourceSound(planarSamples: planes, channelCount: 1, frameCount: 4,
+                                             channelStrideInBytes: 0, sampleRate: 48000))
+        XCTAssertEqual(mono.frameCount, 4)
+        // Two: a stride which is not a whole number of floats is refused
+        XCTAssertNil(SourceSound(planarSamples: planes, channelCount: 2, frameCount: 3,
+                                 channelStrideInBytes: 3 * 4 + 1, sampleRate: 48000))
+    }
+
     func testInterleavedSamplesAreKeptAsTheyAre() throws {
         let interleaved: [Float] = [1, 2, 3, 4, 5, 6]
         let sound = try XCTUnwrap(SourceSound(interleavedStereoSamples: interleaved, frameCount: 3, sampleRate: 48000))
