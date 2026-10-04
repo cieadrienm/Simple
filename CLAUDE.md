@@ -31,6 +31,7 @@ Simple Server se construit depuis `Simple.xcworkspace`.
 - **Ne jamais tuer les apps d'Adrien** (eMotion, OSCScore, AMKinectTrack tournent souvent). Lancer ses propres instances et
   les tuer par PID. Pour tester : `SIMPLE_OSC_PORT=19230 SIMPLE_OSCQUERY_PORT=19231 "build/Simple Recorder.app/Contents/MacOS/Simple Recorder" -RecorderFolder <dossier>`,
   avec des `Simple Server -ServerName A` (B, C…) comme sources ; pour NDI, `build/tools/ndi-send <nom> [largeur hauteur fps] [--bgrx]` (lancé par soi, tué par PID).
+  Simple Server ne publie rien quand l'écran dort : sans écran allumé, prendre `ndi-send` ou un émetteur Syphon qui dessine sur un minuteur.
 - **Les réglages et les sources envoyés en OSC sont enregistrés dans les préférences d'Adrien** (`net.am-cb.simple-recorder`) :
   les remettre à la fin (vider les places : huit fois `/source/1 ""` ; `/output separate`, `/layout row`, `/gap 0`, `/width 0`, `/height 0`), ou passer par des arguments (`-RecorderName x`), qui ne sont pas enregistrés.
 - **Pas d'accès à l'écran** : la fenêtre se vérifie par `build/views/*.png`, les films par `build/tools/movie-info`.
