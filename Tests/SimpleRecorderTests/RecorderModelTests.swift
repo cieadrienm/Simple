@@ -322,4 +322,38 @@ final class RecorderModelTests: XCTestCase {
         XCTAssertEqual(model.sound, "")
         XCTAssertEqual(model.soundLeftOut, 0)
     }
+
+    func testASoundChosenAmongThePlacesIsNeverMissing() throws {
+        recorder.cleanUp()
+        recorder = try TestRecorder(ndi: ["HOST (cam 1)"])
+        model = RecorderModel(controller: recorder.controller)
+        // Ticked, but never connected: its kind is still empty
+        recorder.controller.ndiAvailable = false
+        model.tick("HOST (cam 1)")
+        model.tick("A - Simple Server")
+        XCTAssertFalse(model.soundIsMissing)
+        send("/sound", "HOST (cam 1)")
+        XCTAssertEqual(model.sound, "HOST (cam 1)")
+        XCTAssertFalse(model.soundIsMissing)
+        XCTAssertEqual(model.soundChoices.filter { $0 == "HOST (cam 1)" }.count, 1)
+        // A Syphon place named by /sound is offered plainly, once
+        send("/sound", "A - Simple Server")
+        XCTAssertFalse(model.soundIsMissing)
+        XCTAssertEqual(model.soundChoices.filter { $0 == "A - Simple Server" }.count, 1)
+    }
+
+    func testASoundWhichIsNotAPlaceIsMissing() throws {
+        recorder.cleanUp()
+        recorder = try TestRecorder(ndi: ["HOST (cam 1)", "HOST (cam 2)"])
+        model = RecorderModel(controller: recorder.controller)
+        model.tick("HOST (cam 1)")
+        model.tick("HOST (cam 2)")
+        model.setSound("HOST (cam 2)")
+        model.untick(place: 2)
+        XCTAssertEqual(model.sound, "HOST (cam 2)")
+        XCTAssertTrue(model.soundIsMissing)
+        XCTAssertFalse(model.soundChoices.contains("HOST (cam 2)"))
+        model.setSound("")
+        XCTAssertFalse(model.soundIsMissing)
+    }
 }

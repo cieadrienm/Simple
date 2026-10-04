@@ -36,5 +36,9 @@ final class TakeCaptionTests: XCTestCase {
         XCTAssertEqual(TakeCaption.soundLostText(0.4), "0.4 s")
         XCTAssertEqual(TakeCaption.soundLostText(3), "3.0 s")
         XCTAssertEqual(TakeCaption.soundLostText(12.3), "12 s")
+        // The model rounds to a tenth before the caption sees it
+        XCTAssertEqual(TakeCaption.soundLostText(9.9), "9.9 s")
+        XCTAssertEqual(TakeCaption.soundLostText(10.0), "10 s")
+        XCTAssertEqual(caption(state: "recording", frames: 10, soundLost: 0), .progress(frames: 10, dropped: 0, soundLost: 0))
     }
 }

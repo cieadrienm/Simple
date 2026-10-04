@@ -118,6 +118,16 @@ final class RecorderModel: ObservableObject {
         default: return places.count
         }
     }
+    /// Whether the title chosen for the assembled movie's sound is no place at all (its source was unticked).
+    /// A place which has not connected yet, or a Syphon one, is a place.
+    var soundIsMissing: Bool {
+        !sound.isEmpty && !places.contains { $0.title == sound }
+    }
+    /// The titles the *Sound* picker offers after "None": the NDI places, those not heard from yet (sound may come),
+    /// and the one chosen if it is a place of another kind. Not the missing one: the view adds that, dimmed.
+    var soundChoices: [String] {
+        places.filter { $0.kind == "ndi" || $0.kind.isEmpty || $0.title == sound }.map(\.title)
+    }
     static let outputs: [(name: String, title: String)] = [("separate", "Separate"), ("assembled", "Assembled"), ("both", "Both")]
     static let layouts: [(name: String, title: String, symbol: String)] = [
         ("row", "Side by side", "rectangle.split.3x1"), ("column", "Stacked", "rectangle.split.1x2"),
