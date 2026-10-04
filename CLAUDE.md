@@ -19,7 +19,7 @@ est toujours là. Adrien (spectacle vivant, app eMotion) est l'unique utilisateu
 ## Build et tests
 ```
 Scripts/syphon.sh             # une fois : build/Syphon.xcframework, dont Package.swift a besoin
-swift test                    # tout sauf Simple Server, ~3 min 30 (323+ tests) ; dessine aussi la fenêtre dans build/views/*.png
+swift test                    # tout sauf Simple Server, ~3 min 30 (339 tests) ; dessine aussi la fenêtre dans build/views/*.png
 Scripts/bundle.sh             # build/Simple Recorder.app (signée, MCP dedans) et build/Simple Server.app
 Tools/build.sh                # outils de vérification → build/tools
 ```
