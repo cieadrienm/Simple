@@ -127,6 +127,7 @@ static const double Reach = 24 * 3600.0;
 
     // The correction to make: the error itself, or its smoothed value once it is steady
     long long correction = 0;
+    BOOL wasAnchored = _anchored;
     if (!_anchored || llabs(error) > llround(HardTolerance * _rate))
     {
         _anchored = YES;
@@ -172,6 +173,8 @@ static const double Reach = 24 * 3600.0;
         long long overlap = -correction;
         if (overlap >= frameCount)
         {
+            // Nothing of it is written: the run is anchored by the first piece which is
+            _anchored = wasAnchored;
             _leftOut += frameCount;
             return @[];
         }

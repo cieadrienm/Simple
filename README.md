@@ -58,7 +58,7 @@ Sound
 NDI sources which send sound are recorded with it: in the source's own movie, and in the assembled movie for the one source chosen (`/sound`, or *Sound* in the window's "Assembled" settings; none by default). A note sign in the list of sources marks those which have sound. A source which sends no sound gives a movie without a sound track, exactly as before.
 
 - **Format**: 48 kHz, two channels: the first two of the source, a single channel being copied to both. AAC at 256 kbit/s with H.264 and HEVC, linear PCM at 24 bits with ProRes. Sound at another rate is converted.
-- **In step with the pictures**: like frames, sound is placed by its arrival, and measured it stays within about a frame of the pictures. The track is one unbroken stream: where sound is missing (it starts late, the sender was away) there is silence.
+- **In step with the pictures**: like frames, sound is placed by its arrival, and measured it stays within about a frame of the pictures. The track is one unbroken stream: where sound is missing (it starts late, the sender was away) there is silence. A source whose clock drifts from this Mac's is brought back by corrections of about 20 ms (a short silence, or as much sound left out), a few times an hour at most.
 - **Never delaying the pictures**: if an encoder cannot keep up, sound is left out and counted (`/status/sound/leftout`), and the pictures are written as usual.
 - **Limits**: NDI only (Syphon has no sound); two channels. The sound of the source chosen stays chosen when its source is unticked, and is decided when a recording starts.
 
@@ -94,6 +94,7 @@ Simple Recorder listens for OSC on UDP port **9230** and describes its parameter
 | `/status/source/N/width`, `/height`, `/fps` | int, int, float | read | What it delivers |
 | `/status/source/N/file`, `/frames`, `/dropped` | string, int, int | read | Its movie |
 | `/status/source/N/sound` | int | read | 1 if the source in place N is sending sound |
+| `/status/source/N/soundwritten` | float | read | Seconds of sound in its movie |
 | `/status/sound/written` | float | read | Seconds of sound in the assembled movie |
 | `/status/sound/leftout` | float | read | Seconds of sound left out in all the movies because an encoder could not keep up |
 | `/status/assembled/width`, `/height` | int | read | The size of the assembled picture as it is now, or of the recording in progress |
@@ -118,7 +119,7 @@ MCP
 
 `simple-recorder-mcp` is inside the app (`Contents/MacOS`). It is a stdio MCP server which reads the recorder through OSCQuery and writes with OSC, so the app must be running. `.mcp.json` declares it for Claude Code, from `build/Simple Recorder.app`.
 
-- `recorder_status`: the sources chosen, each with its `kind` (`syphon` or `ndi`) and what it delivers and writes (`sound`: whether it sends sound), `ndi` (whether NDI's library is loaded), the sources available as a list of `{title, kind}` (a list of plain titles before NDI: its shape changed), settings (`sound`: the source whose sound the assembled movie takes), the assembled picture and its movie (`assembled`, with `soundWritten`, seconds of sound in it), `soundLeftOut`, state, errors
+- `recorder_status`: the sources chosen, each with its `kind` (`syphon` or `ndi`) and what it delivers and writes (`sound`: whether it sends sound; `soundWritten`: seconds of sound in its movie), `ndi` (whether NDI's library is loaded), the sources available as a list of `{title, kind}` (a list of plain titles before NDI: its shape changed), settings (`sound`: the source whose sound the assembled movie takes), the assembled picture and its movie (`assembled`, with `soundWritten`, seconds of sound in it), `soundLeftOut`, state, errors
 - `recorder_configure {sources, source, codec, fps, bitrate, folder, name, output, layout, gap, width, height, sound}`: changes what is given; `sources` is a list of titles, in order, of Syphon servers or NDI sources; `sound` is the title (or part of it) of the source among them whose sound the assembled movie takes, or empty for none
 - `recorder_start`: accepts the same; returns once recording, or fails with the reason
 - `recorder_stop`: returns once the movies are finished, with their paths

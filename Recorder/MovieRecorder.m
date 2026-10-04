@@ -890,9 +890,16 @@ static NSError *RecorderError(NSString *description)
             if ([placed isKindOfClass:[NSNumber class]])
             {
                 int64_t owed = [placed longLongValue];
+                if (owed <= 0)
+                {
+                    // Nothing is owed: it must not stop what follows
+                    [_placedSound removeObjectAtIndex:0];
+                    continue;
+                }
                 int64_t frames = MIN(owed, silenceLeft);
                 if (frames == 0)
                 {
+                    // This call's silence is given
                     break;
                 }
                 if (![self appendSamples:NULL frameCount:(NSUInteger)frames])
@@ -983,8 +990,9 @@ static NSError *RecorderError(NSString *description)
         // Before the movie, early, or at a time which is wrong: nothing changes
         return;
     }
-    NSTimeInterval silence = _soundTimeline.silenceAdded - silenceBefore;
-    if (sound.sampleRate != _soundRate || silence > 0.0)
+    // At 48 kHz: a silence of less than half a sample (one sample of a source above 96 kHz) is none
+    int64_t silence = llround((_soundTimeline.silenceAdded - silenceBefore) * kSoundRate);
+    if (sound.sampleRate != _soundRate || silence > 0)
     {
         // What the converter holds back goes before the silence, or ends the run of the last rate
         [self endConversion];
@@ -998,10 +1006,10 @@ static NSError *RecorderError(NSString *description)
         AVAudioFormat *to = [[AVAudioFormat alloc] initWithCommonFormat:AVAudioPCMFormatFloat32 sampleRate:kSoundRate channels:2 interleaved:YES];
         _converter = [[AVAudioConverter alloc] initFromFormat:from toFormat:to];
     }
-    if (silence > 0.0)
+    if (silence > 0)
     {
         // The timeline gives silence then the piece: the silence is owed as a count, made only as it is written
-        [_placedSound addObject:@(llround(silence * kSoundRate))];
+        [_placedSound addObject:@(silence)];
     }
     SourceSound *placed = _converter ? [self convertSound:pieces.lastObject] : pieces.lastObject;
     if (placed)

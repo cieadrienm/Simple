@@ -94,7 +94,7 @@ struct Recorder {
             places.append(["place": place, "title": title, "kind": value(status + "kind"), "online": (value(status + "online") as? NSNumber)?.boolValue ?? false,
                            "width": value(status + "width"), "height": value(status + "height"), "fps": value(status + "fps"),
                            "file": value(status + "file"), "frames": value(status + "frames"), "dropped": value(status + "dropped"),
-                           "sound": (value(status + "sound") as? NSNumber)?.boolValue ?? false])
+                           "sound": (value(status + "sound") as? NSNumber)?.boolValue ?? false, "soundWritten": value(status + "soundwritten")])
         }
         return [
             "sources": places,
@@ -355,7 +355,7 @@ let settingsProperties: [String: Any] = [
 let tools: [[String: Any]] = [
     ["name": "recorder_status",
      "description": "The state of Simple Recorder: the sources chosen for recording, in order, with each one's kind (syphon or ndi) and what it delivers (online, size, frame rate) and its movie "
-        + "(file, frames written and dropped, and sound: true if the source is sending sound, which only NDI sources do); the sources which can be chosen (sourcesAvailable: a list of {title, kind}, kind being syphon or ndi; it was a list of titles before NDI sources came); whether NDI is usable (ndi: false when NDI's library is not installed, which only leaves NDI sources out); the settings, among them what a recording writes "
+        + "(file, frames written and dropped, sound: true if the source is sending sound, which only NDI sources do, and soundWritten: seconds of sound in its movie); the sources which can be chosen (sourcesAvailable: a list of {title, kind}, kind being syphon or ndi; it was a list of titles before NDI sources came); whether NDI is usable (ndi: false when NDI's library is not installed, which only leaves NDI sources out); the settings, among them what a recording writes "
         + "(output: separate | assembled | both), which source's sound the assembled movie takes (sound) and how the sources are assembled (layout, gap, width, height); the assembled picture's size now and "
         + "the assembled movie (assembled: width, height, file, frames, dropped, soundWritten: seconds of sound in it); the seconds of sound left out in all the movies because an encoder could not keep up (soundLeftOut; pictures are never delayed for sound); whether it is recording "
         + "(state: idle | recording | finishing) and for how long; the last error (error: a refused message, a recording which could not start), "

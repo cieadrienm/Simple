@@ -198,6 +198,19 @@ final class SoundTimelineTests: XCTestCase {
         XCTAssertEqual(straddling.silenceAdded, 0)
     }
 
+    func testAFirstPieceWhollyLeftOutDoesNotAnchorTheRun() {
+        // Nothing of the first piece is written: the next is the first of the run, and is anchored exactly
+        let timeline = SoundTimeline(origin: 10)
+        XCTAssertEqual(feed(timeline, piece(1024), at: 9.5).count, 0)
+        let sound = piece(1024)
+        let pieces = feed(timeline, sound, at: 10.05 + sound.duration)
+        XCTAssertEqual(pieces.count, 2)
+        XCTAssertEqual(pieces.first?.frameCount, 2400)
+        XCTAssertTrue(pieces.first.map(isSilence) ?? false)
+        XCTAssertTrue(pieces.last === sound)
+        XCTAssertEqual(timeline.silenceAdded, 0.05, accuracy: 1e-12)
+    }
+
     func testAnEarlyPieceIsCutOrLeftOut() {
         let origin = 0.0
         let timeline = SoundTimeline(origin: origin)

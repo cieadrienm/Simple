@@ -823,6 +823,37 @@ final class MovieRecorderTests: XCTestCase {
         XCTAssertEqual(recorder.soundLeftOut, 0)
     }
 
+    func testSilenceShorterThanASampleOfTheMovieIsNotOwed() throws {
+        // A 192 kHz source whose first sample belongs one of its samples after the movie's start: a quarter of a
+        // sample at 48 kHz, which is nothing. It must not stop the sound behind it.
+        let recorder = MovieRecorder(device: device)
+        let url = folder.appendingPathComponent("192k.mov")
+        let rate = 192000.0
+        let settings = soundSettings()
+        try recorder.startWriting(to: url, settings: settings, startTime: 100)
+        let texture = makeTexture(width: 320, height: 180)
+        let feed = SoundFeed(rate: rate, from: 100 + 1 / rate, to: 102)
+        for index in 0..<60 {
+            let time = 100 + Double(index) / 30
+            feed.give(to: recorder, upTo: time)
+            append(texture, to: recorder, at: time)
+        }
+        feed.give(to: recorder, upTo: 102)
+        let deadline = Date().addingTimeInterval(5)
+        while recorder.soundWritten < 1.9 && Date() < deadline { usleep(10_000) }
+        XCTAssertGreaterThan(recorder.soundWritten, 1.9, "the sound is written while recording")
+        let start = Date()
+        XCTAssertNil(finish(recorder, at: 102))
+        XCTAssertLessThan(Date().timeIntervalSince(start), 0.5, "finishing waits for nothing")
+
+        XCTAssertEqual(recorder.soundWritten, 2, accuracy: 0.03)
+        XCTAssertEqual(recorder.soundLeftOut, 0)
+        let sound = try SoundInfo(url)
+        XCTAssertEqual(sound.duration, 2, accuracy: 0.03)
+        XCTAssertEqual(try XCTUnwrap(sound.soundStart()), 0, accuracy: 0.001)
+        XCTAssertEqual(sound.frequency(from: 0.1, to: 1.9), 1000, accuracy: 5)
+    }
+
     func testAPieceLongerThanWhatMayWaitIsCutRatherThanLost() throws {
         let recorder = MovieRecorder(device: device)
         let url = folder.appendingPathComponent("longpiece.mov")

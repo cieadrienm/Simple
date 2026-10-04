@@ -101,7 +101,7 @@ struct SourceRow: View {
                 Spacer(minLength: 4)
                 if hasSound {
                     Image(systemName: "music.note").font(.system(size: 10)).foregroundStyle(Theme.textDim)
-                        .help("Its sound is recorded in its movie")
+                        .help("This source has sound")
                         .accessibilityLabel("Has sound")
                 }
                 // Tells NDI sources from Syphon's at a glance

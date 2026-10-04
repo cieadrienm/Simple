@@ -233,15 +233,6 @@ static const NSTimeInterval kLongestSilenceTimeout = 30.0;
     return self.source != nil && lastSoundTime > 0.0 && CACurrentMediaTime() - lastSoundTime < kSoundTimeout;
 }
 
-// YES once sound has arrived from the source connected to
-- (BOOL)wasHeard
-{
-    os_unfair_lock_lock(&_lock);
-    NSTimeInterval lastSoundTime = _lastSoundTime;
-    os_unfair_lock_unlock(&_lock);
-    return self.source != nil && lastSoundTime > 0.0;
-}
-
 - (NSInteger)width
 {
     os_unfair_lock_lock(&_lock);
@@ -1260,24 +1251,6 @@ static Layout *MonitorLayout(Layout *layout, LayoutKind kind, NSArray *sizes, NS
 
 #pragma mark Recording
 
-// What a place's source is: as it was when it connected or, if it never has, as the sources available say. -1 if it
-// cannot be known.
-- (FrameSourceKind)kindOfPlace:(RecorderPlace *)place
-{
-    if (place.kindKnown)
-    {
-        return place.kind;
-    }
-    for (SourceDescription *source in self.availableSources)
-    {
-        if ([source.title isEqualToString:place.title])
-        {
-            return source.kind;
-        }
-    }
-    return (FrameSourceKind)-1;
-}
-
 - (BOOL)failWithError:(NSString *)error
 {
     self.error = error;
@@ -1328,11 +1301,11 @@ static Layout *MonitorLayout(Layout *layout, LayoutKind kind, NSArray *sizes, NS
         name = [NSString stringWithFormat:@"Simple Recorder %@", [formatter stringFromDate:[NSDate date]]];
     }
 
-    // The sources whose movies have a sound track: those which have sound now, and the NDI sources which may bring
-    // it when they come. A movie whose track receives nothing has none in the end.
+    // The sources whose movies have a sound track: all but those known to be Syphon's, which has no sound. A source
+    // which is away or silent now may bring sound later, and a movie whose track receives nothing has none in the end.
     NSMutableIndexSet *soundSources = [NSMutableIndexSet indexSet];
     [places enumerateObjectsUsingBlock:^(RecorderPlace *place, NSUInteger index, BOOL *stop) {
-        if (place.hasSound || ([self kindOfPlace:place] == FrameSourceKindNDI && ![place wasHeard]))
+        if (!(place.kindKnown && place.kind == FrameSourceKindSyphon))
         {
             [soundSources addIndex:index];
         }
@@ -1785,7 +1758,8 @@ static Layout *MonitorLayout(Layout *layout, LayoutKind kind, NSArray *sizes, NS
             [self placeStatusParameter:@"frames" place:place type:@"i" summary:@"Frames written to the source's movie" key:@"frames"],
             [self placeStatusParameter:@"dropped" place:place type:@"i" summary:@"Frames of the source lost because the encoder could not keep up" key:@"dropped"],
             [self placeStatusParameter:@"kind" place:place type:@"s" summary:@"What the source is: syphon or ndi. Empty until it has been connected to." key:@"kindName"],
-            [self placeStatusParameter:@"sound" place:place type:@"i" summary:@"1 if the source is delivering sound" key:@"hasSound"]
+            [self placeStatusParameter:@"sound" place:place type:@"i" summary:@"1 if the source is delivering sound" key:@"hasSound"],
+            [self placeStatusParameter:@"soundwritten" place:place type:@"f" summary:@"Seconds of sound in the source's movie, being written or last written" key:@"soundWritten"]
         ]];
     }
 

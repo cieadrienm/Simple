@@ -1407,6 +1407,14 @@ final class RecorderControllerTests: XCTestCase {
         XCTAssertEqual(controller.places[1].soundWritten, 1.5, accuracy: 0.15)
         XCTAssertEqual(controller.places[0].soundWritten, 0)
         XCTAssertEqual(controller.soundLeftOut, 0)
+
+        // OSC tells it too, after the take
+        XCTAssertTrue(controller.startNetwork(withOSCPort: 19500, queryPort: 19501, name: "Recorder Test"))
+        let written = get("/status/source/2/soundwritten")
+        XCTAssertEqual(written["TYPE"] as? String, "f")
+        XCTAssertEqual(try XCTUnwrap((written["VALUE"] as? [Double])?.first), controller.places[1].soundWritten, accuracy: 1e-6)
+        XCTAssertEqual(get("/status/source/1/soundwritten")["VALUE"] as? [Double], [0])
+        XCTAssertFalse((written["DESCRIPTION"] as? String ?? "").isEmpty)
     }
 
     func testTheAssembledMovieHasTheSoundChosen() throws {
@@ -1537,6 +1545,82 @@ final class RecorderControllerTests: XCTestCase {
         XCTAssertFalse(try hasSound(controller.places[0].file))
     }
 
+    func testAnNDISourceSilentAtTheStartStillHasItsSoundRecordedWhenItReturns() throws {
+        // A sender which sends sound only while something plays: heard, then silent when the take starts
+        useSyphonAndNDI(syphon: [], ndi: [camera])
+        tick([camera])
+        send("/output", "both")
+        send("/sound", camera)
+        send("/name", "show")
+        let pictures = [(camera, makeTexture())]
+        deliverFramesAndSound(for: 0.2, frames: pictures, tones: [camera: 1000])
+        let deadline = Date().addingTimeInterval(6)
+        while controller.places[0].hasSound && Date() < deadline {
+            RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+        }
+        XCTAssertFalse(controller.places[0].hasSound)
+
+        XCTAssertTrue(controller.start())
+        deliverFrames(for: 2, from: pictures)
+        let returned = controller.elapsed
+        deliverFramesAndSound(for: 1, frames: pictures, tones: [camera: 1000])
+        stopAndWait()
+        XCTAssertEqual(controller.error, "")
+
+        for file in [controller.places[0].file, controller.assembledFile] {
+            let tone = try sound(file)
+            XCTAssertEqual(try XCTUnwrap(tone.soundStart()), returned, accuracy: 0.1, file)
+            XCTAssertEqual(tone.frequency(from: returned + 0.2, to: returned + 0.8), 1000, accuracy: 10, file)
+        }
+    }
+
+    func testASyphonPlaceHasNoSoundTrack() throws {
+        useSyphonAndNDI(syphon: [a], ndi: [camera])
+        tick([a, camera])
+        send("/output", "both")
+        send("/sound", a)
+        let pictures = [(a, makeTexture()), (camera, makeTexture())]
+        let tones = [a: 2000.0, camera: 1000.0]
+        // Syphon has no sound: a test's source which delivers some all the same is not recorded
+        deliverFramesAndSound(for: 0.2, frames: pictures, tones: tones)
+        XCTAssertTrue(controller.places[0].hasSound)
+        XCTAssertTrue(controller.start())
+        deliverFramesAndSound(for: 1, frames: pictures, tones: tones)
+        stopAndWait()
+        XCTAssertEqual(controller.error, "")
+
+        XCTAssertFalse(try hasSound(controller.places[0].file))
+        XCTAssertFalse(try hasSound(controller.assembledFile))
+        XCTAssertEqual(controller.places[0].soundWritten, 0)
+        XCTAssertEqual(controller.assembledSoundWritten, 0)
+        XCTAssertEqual(controller.soundLeftOut, 0)
+        XCTAssertTrue(try hasSound(controller.places[1].file))
+    }
+
+    func testAPlaceNeverConnectedRecordsTheSoundOfTheSourceWhichComes() throws {
+        useSyphonAndNDI(syphon: [a], ndi: [camera])
+        tick([a, camera])
+        // The app is launched again while the camera is away: its place is restored, its kind unknown
+        directory = FakeDirectory([a])
+        let ndiDirectory = FakeDirectory([], kind: .NDI)
+        self.ndiDirectory = ndiDirectory
+        controller = RecorderController(device: device, directory: CompositeDirectory(directories: [directory, ndiDirectory]), defaults: defaults)
+        controller.folder = folder.path
+        XCTAssertEqual(controller.places.map(\.kindName), ["syphon", ""])
+
+        XCTAssertTrue(controller.start())
+        deliverFrames(for: 0.3, from: [(a, makeTexture())])
+        ndiDirectory.setTitles([camera])
+        let arrived = controller.elapsed
+        deliverFramesAndSound(for: 1, frames: [(a, makeTexture()), (camera, makeTexture())], tones: [camera: 1000])
+        stopAndWait()
+        XCTAssertEqual(controller.error, "")
+
+        let tone = try sound(controller.places[1].file)
+        XCTAssertEqual(try XCTUnwrap(tone.soundStart()), arrived, accuracy: 0.1)
+        XCTAssertEqual(tone.frequency(from: arrived + 0.2, to: arrived + 0.8), 1000, accuracy: 10)
+    }
+
     func testOSCQueryDescribesSound() throws {
         useSyphonAndNDI(syphon: [a], ndi: [camera])
         tick([a, camera])
@@ -1621,7 +1705,7 @@ final class RecorderControllerTests: XCTestCase {
         XCTAssertEqual(Set(contents(status["sound"]).keys), ["written", "leftout"])
         XCTAssertEqual((status["state"] as? [String: Any])?["VALUE"] as? [String], ["idle"])
         let placeStatus = contents(contents(status["source"])["1"])
-        XCTAssertEqual(Set(placeStatus.keys), ["online", "width", "height", "fps", "file", "frames", "dropped", "kind", "sound"])
+        XCTAssertEqual(Set(placeStatus.keys), ["online", "width", "height", "fps", "file", "frames", "dropped", "kind", "sound", "soundwritten"])
         XCTAssertEqual(Set(contents(status["source"]).keys), Set((1...8).map(String.init)))
         // An OSC int, not a JSON true or false
         let online = try XCTUnwrap(((placeStatus["online"] as? [String: Any])?["VALUE"] as? [Any])?.first as? NSNumber)
