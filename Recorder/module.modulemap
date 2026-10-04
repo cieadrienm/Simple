@@ -1,8 +1,9 @@
 // What SwiftPM would make of RecorderKit.h, less the headers private to Recorder/ and the tests' support (those which
-// include the NDI SDK's, and the finder): they must stay out of the module Swift sees
+// include the NDI SDK's, the finder and the NDI source): they must stay out of the module Swift sees
 module RecorderKit {
     umbrella header "RecorderKit.h"
     exclude header "NDILibrary+Functions.h"
     exclude header "NDIFinder.h"
+    exclude header "NDISource.h"
     export *
 }

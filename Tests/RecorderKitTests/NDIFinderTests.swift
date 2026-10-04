@@ -85,9 +85,6 @@ final class NDIFinderTests: XCTestCase {
         XCTAssertEqual(source.detail, "NDI")
         XCTAssertEqual(source.kind, .NDI)
         XCTAssertTrue(changed)
-        // Until receivers are made, nothing is connected to
-        let device = try XCTUnwrap(MTLCreateSystemDefaultDevice())
-        XCTAssertNil(directory.connectToSource(withTitle: source.title, device: device))
     }
 
     func testWithoutTheLibraryTheDirectoryIsEmpty() throws {

@@ -29,8 +29,10 @@
 
 #import "NDIDirectory.h"
 #import "NDIFinder.h"
+#import "NDISource.h"
 
 @implementation NDIDirectory {
+    NDILibrary *_library;
     NDIFinder *_finder;     // nil without the library; stopped when this is released, with it
 }
 
@@ -40,6 +42,7 @@
 {
     self = [super init];
     if (self) {
+        _library = library;
         _finder = [[NDIFinder alloc] initWithLibrary:library];
         __weak NDIDirectory *weakSelf = self;
         _finder.changeHandler = ^{
@@ -66,8 +69,13 @@
 
 - (id<FrameSource>)connectToSourceWithTitle:(NSString *)title device:(id<MTLDevice>)device
 {
-    // Receivers come next
-    return nil;
+    // A source which has gone is no longer found: nothing is connected to. One which is listed but has gone is found
+    // not alive by the controller, which lets it go and asks again.
+    NSString *name = nil;
+    NSString *url = nil;
+    if (![_finder getName:&name url:&url forSourceNamed:title])
+        return nil;
+    return [[NDISource alloc] initWithTitle:title name:name url:url library:_library device:device];
 }
 
 @end
