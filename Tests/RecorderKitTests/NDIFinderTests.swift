@@ -98,6 +98,53 @@ final class NDIFinderTests: XCTestCase {
         XCTAssertEqual(directory.availableSources().count, 0)
         let device = try XCTUnwrap(MTLCreateSystemDefaultDevice())
         XCTAssertNil(directory.connectToSource(withTitle: "HOST (anything)", device: device))
+        // Nothing to wait for: the main queue runs a while, so that a call would be seen
+        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.5))
+    }
+
+    /// What the finder makes of the SDK's strings, given as bytes (a terminating zero is added); nil for NULL
+    private func copied(name: [UInt8]?, url: [UInt8]?) -> (found: Bool, name: String?, url: String?) {
+        func withCString<R>(_ bytes: [UInt8]?, _ body: (UnsafePointer<CChar>?) -> R) -> R {
+            guard let bytes else { return body(nil) }
+            return (bytes + [0]).withUnsafeBufferPointer { buffer in
+                buffer.baseAddress!.withMemoryRebound(to: CChar.self, capacity: buffer.count) { body($0) }
+            }
+        }
+        var copiedName: NSString?
+        var copiedURL: NSString?
+        let found = withCString(name) { name in
+            withCString(url) { url in
+                NDIFinder.copyName(&copiedName, url: &copiedURL, fromSourceName: name, url: url)
+            }
+        }
+        return (found, copiedName as String?, copiedURL as String?)
+    }
+
+    // A name from another machine may be any bytes: one which is not UTF-8 is left out, rather than end the finder
+    func testTheSDKsStringsAreCopiedOrSkipped() {
+        let good = copied(name: Array("HOST (Good)".utf8), url: Array("192.168.1.2:5961".utf8))
+        XCTAssertTrue(good.found)
+        XCTAssertEqual(good.name, "HOST (Good)")
+        XCTAssertEqual(good.url, "192.168.1.2:5961")
+
+        let noURL = copied(name: Array("HOST (Good)".utf8), url: nil)
+        XCTAssertTrue(noURL.found)
+        XCTAssertEqual(noURL.name, "HOST (Good)")
+        XCTAssertNil(noURL.url)
+
+        let badName = copied(name: [0xff, 0xfe] + Array(" (Bad)".utf8), url: Array("192.168.1.2:5961".utf8))
+        XCTAssertFalse(badName.found)
+        XCTAssertNil(badName.name)
+        XCTAssertNil(badName.url)
+
+        let badURL = copied(name: Array("HOST (Good)".utf8), url: [0xff, 0xfe, 0x3a])
+        XCTAssertTrue(badURL.found)
+        XCTAssertEqual(badURL.name, "HOST (Good)")
+        XCTAssertNil(badURL.url)
+
+        let noName = copied(name: nil, url: Array("192.168.1.2:5961".utf8))
+        XCTAssertFalse(noName.found)
+        XCTAssertNil(noName.name)
     }
 
     func testStopEndsTheThread() throws {

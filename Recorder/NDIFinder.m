@@ -112,11 +112,13 @@ static void NDIFinderRun(const NDIlib_v5 *ndi, NDIlib_find_instance_t find, NDIF
             NSMutableArray<NSString *> *names = [NSMutableArray arrayWithCapacity:count];
             NSMutableArray *urls = [NSMutableArray arrayWithCapacity:count];
             for (uint32_t index = 0; index < count; index++) {
-                if (!sources[index].p_ndi_name)
+                NSString *name = nil;
+                NSString *url = nil;
+                if (![NDIFinder copyName:&name url:&url fromSourceName:sources[index].p_ndi_name
+                                     url:sources[index].p_url_address])
                     continue;
-                [names addObject:@(sources[index].p_ndi_name)];
-                const char *url = sources[index].p_url_address;
-                [urls addObject:url ? @(url) : NSNull.null];
+                [names addObject:name];
+                [urls addObject:url ?: NSNull.null];
             }
 
             [state.condition lock];
@@ -143,6 +145,20 @@ static void NDIFinderRun(const NDIlib_v5 *ndi, NDIlib_find_instance_t find, NDIF
     state.running = NO;
     [state.condition broadcast];
     [state.condition unlock];
+}
+
++ (BOOL)copyName:(NSString **)name url:(NSString **)url fromSourceName:(const char *)sourceName url:(const char *)sourceURL
+{
+    // @() would give nil for bytes which are not UTF-8, and adding nil to an array would end the app
+    NSString *copiedName = sourceName ? [NSString stringWithUTF8String:sourceName] : nil;
+    if (!copiedName) {
+        *name = nil;
+        *url = nil;
+        return NO;
+    }
+    *name = copiedName;
+    *url = sourceURL ? [NSString stringWithUTF8String:sourceURL] : nil;
+    return YES;
 }
 
 - (NSArray<NSString *> *)sourceNames

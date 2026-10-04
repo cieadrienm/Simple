@@ -54,6 +54,11 @@ NS_ASSUME_NONNULL_BEGIN
 // from their UTF8String, and keeps these strings for the receiver's whole life: NDI may read them after recv_create.
 - (BOOL)getName:(NSString * _Nullable * _Nonnull)name url:(NSString * _Nullable * _Nonnull)url forSourceNamed:(NSString *)title;
 
+// A source as the SDK gives it, copied: NO, and both nil, when it has no name or one which is not UTF-8 (any bytes may
+// come from the network); a url which is NULL or not UTF-8 is nil
++ (BOOL)copyName:(NSString * _Nullable * _Nonnull)name url:(NSString * _Nullable * _Nonnull)url
+  fromSourceName:(nullable const char *)sourceName url:(nullable const char *)sourceURL;
+
 // Called on the main queue when sourceNames has really changed, never once stop has returned
 @property (copy, nullable) void (^changeHandler)(void);
 
