@@ -133,6 +133,71 @@ final class MovieRecorderTests: XCTestCase {
         XCTAssertTrue(pixel.r < 30 && pixel.g < 30 && pixel.b < 30, "expected black, got \(pixel)", file: file, line: line)
     }
 
+    /// Sound made by a source from one time to another, in pieces which arrive when their last sample is made, as
+    /// they do from a sender. The same value on both channels.
+    private final class SoundFeed {
+        let rate: Double, from: Double, to: Double, piece: Int
+        let value: (Int) -> Float
+        private(set) var given = 0
+
+        init(rate: Double = 48000, from: Double, to: Double, pieceSeconds: Double = 0.01, value: @escaping (Int) -> Float) {
+            self.rate = rate
+            self.from = from
+            self.to = to
+            self.piece = Int(pieceSeconds * rate)
+            self.value = value
+        }
+
+        /// A tone of half the full scale
+        convenience init(rate: Double = 48000, from: Double, to: Double, frequency: Double = 1000) {
+            self.init(rate: rate, from: from, to: to) { Float(0.5 * sin(2 * .pi * frequency * Double($0) / rate)) }
+        }
+
+        /// Gives the recorder the pieces which have arrived by a time.
+        func give(to recorder: MovieRecorder, upTo time: Double) {
+            let total = Int(((to - from) * rate).rounded())
+            while true {
+                let count = min(piece, total - given)
+                guard count > 0 else { return }
+                let arrival = from + Double(given + count) / rate
+                guard arrival <= time + 1e-9 else { return }
+                var samples = [Float](repeating: 0, count: count * 2)
+                for index in 0..<count {
+                    let value = value(given + index)
+                    samples[2 * index] = value
+                    samples[2 * index + 1] = value
+                }
+                recorder.append(SourceSound(interleavedStereoSamples: samples, frameCount: UInt(count), sampleRate: rate)!, atTime: arrival)
+                given += count
+            }
+        }
+    }
+
+    private func soundSettings(_ codec: MovieCodec = .H264, width: Int = 0, height: Int = 0) -> MovieRecorderSettings {
+        let settings = settings(codec, width: width, height: height)
+        settings.recordsSound = true
+        return settings
+    }
+
+    /// Records frames 30 times a second from one time to another and, before each, the sound which has arrived;
+    /// finishes at `finish`.
+    @discardableResult
+    private func recordWithSound(_ recorder: MovieRecorder, name: String, settings: MovieRecorderSettings, startTime: Double = 100,
+                                 frames: (from: Double, to: Double), sound: [SoundFeed], finish finishTime: Double) throws -> URL {
+        let url = folder.appendingPathComponent("\(name).mov")
+        let texture = makeTexture(width: 320, height: 180)
+        try recorder.startWriting(to: url, settings: settings, startTime: startTime)
+        let count = Int(((frames.to - frames.from) * 30).rounded())
+        for index in 0..<count {
+            let time = frames.from + Double(index) / 30
+            sound.forEach { $0.give(to: recorder, upTo: time) }
+            append(texture, to: recorder, at: time)
+        }
+        sound.forEach { $0.give(to: recorder, upTo: finishTime) }
+        XCTAssertNil(finish(recorder, at: finishTime))
+        return url
+    }
+
     // MARK: Tests
 
     func testWritesH264MovieOfSourceSize() throws {
@@ -472,5 +537,199 @@ final class MovieRecorderTests: XCTestCase {
         XCTAssertTrue(MovieRecorderSettings.getCodec(&codec, forName: "hevc"))
         XCTAssertEqual(codec, .HEVC)
         XCTAssertFalse(MovieRecorderSettings.getCodec(&codec, forName: "hap"))
+    }
+
+    // MARK: Sound
+
+    func testAToneIsWrittenAndReadBack() throws {
+        let recorder = MovieRecorder(device: device)
+        let url = try recordWithSound(recorder, name: "tone", settings: soundSettings(), frames: (100, 102),
+                                      sound: [SoundFeed(from: 100, to: 102)], finish: 102)
+
+        let sound = try SoundInfo(url)
+        XCTAssertEqual(sound.codec, "aac ")
+        XCTAssertEqual(sound.sampleRate, 48000)
+        XCTAssertEqual(sound.channelCount, 2)
+        XCTAssertEqual(sound.duration, 2, accuracy: 0.03)
+        XCTAssertEqual(sound.frequency(from: 0.2, to: 1.8), 1000, accuracy: 5)
+        XCTAssertEqual(try XCTUnwrap(sound.soundStart()), 0, accuracy: 0.03)
+        XCTAssertEqual(recorder.soundWritten, 2, accuracy: 0.03)
+        XCTAssertEqual(recorder.soundLeftOut, 0)
+        XCTAssertEqual(try sampleCount(url), 60, "the pictures are all there")
+    }
+
+    func testProResMoviesHaveLinearPCM() throws {
+        let url = try recordWithSound(MovieRecorder(device: device), name: "prores", settings: soundSettings(.proRes422),
+                                      frames: (100, 101), sound: [SoundFeed(from: 100, to: 101)], finish: 101)
+
+        let sound = try SoundInfo(url)
+        XCTAssertEqual(sound.codec, "lpcm")
+        XCTAssertEqual(sound.bitsPerChannel, 24)
+        XCTAssertEqual(sound.sampleRate, 48000)
+        XCTAssertEqual(sound.channelCount, 2)
+        XCTAssertEqual(sound.duration, 1, accuracy: 0.03)
+        XCTAssertEqual(sound.frequency(from: 0.1, to: 0.9), 1000, accuracy: 5)
+    }
+
+    func testA44100HertzToneKeepsItsPitchAndLength() throws {
+        let url = try recordWithSound(MovieRecorder(device: device), name: "44100", settings: soundSettings(), frames: (100, 102),
+                                      sound: [SoundFeed(rate: 44100, from: 100, to: 102)], finish: 102)
+
+        let sound = try SoundInfo(url)
+        XCTAssertEqual(sound.sampleRate, 48000)
+        XCTAssertEqual(sound.duration, 2, accuracy: 0.03)
+        XCTAssertEqual(sound.frequency(from: 0.2, to: 1.8), 1000, accuracy: 5)
+    }
+
+    func testAChangeOfRateKeepsThePitch() throws {
+        // The encoder converts only from the first rate it is given: a sender relaunched at another rate must not
+        // change the pitch of what follows
+        let url = try recordWithSound(MovieRecorder(device: device), name: "rates", settings: soundSettings(), frames: (100, 102),
+                                      sound: [SoundFeed(rate: 44100, from: 100, to: 101), SoundFeed(rate: 48000, from: 101, to: 102)],
+                                      finish: 102)
+
+        let sound = try SoundInfo(url)
+        XCTAssertEqual(sound.duration, 2, accuracy: 0.03)
+        XCTAssertEqual(sound.frequency(from: 0.1, to: 0.9), 1000, accuracy: 5)
+        XCTAssertEqual(sound.frequency(from: 1.1, to: 1.9), 1000, accuracy: 5)
+    }
+
+    func testSoundWhichStartsLateIsPlacedOnTheMoviesClock() throws {
+        let recorder = MovieRecorder(device: device)
+        let url = try recordWithSound(recorder, name: "late", settings: soundSettings(), frames: (100, 101.5),
+                                      sound: [SoundFeed(from: 100.5, to: 101.5)], finish: 101.5)
+
+        let sound = try SoundInfo(url)
+        XCTAssertEqual(try XCTUnwrap(sound.soundStart()), 0.5, accuracy: 0.03)
+        XCTAssertEqual(sound.duration, 1.5, accuracy: 0.03)
+        XCTAssertEqual(recorder.soundWritten, 1.5, accuracy: 0.03, "the silence before it is written too")
+    }
+
+    func testTwoMoviesOfATakeHaveTheirSoundInStep() throws {
+        // A click at 101: the first sample of the piece which arrives at 101.01
+        let click: (Int) -> Float = { $0 == 48000 ? 1 : 0 }
+        let first = MovieRecorder(device: device), second = MovieRecorder(device: device)
+        let firstURL = folder.appendingPathComponent("first.mov"), secondURL = folder.appendingPathComponent("second.mov")
+        try first.startWriting(to: firstURL, settings: soundSettings(), startTime: 100)
+        try second.startWriting(to: secondURL, settings: soundSettings(.proRes422), startTime: 100)
+        let firstSound = SoundFeed(from: 100, to: 102, value: click), secondSound = SoundFeed(from: 100, to: 102, value: click)
+        let texture = makeTexture(width: 320, height: 180)
+        for index in 0..<60 {
+            let time = 100 + Double(index) / 30
+            firstSound.give(to: first, upTo: time)
+            secondSound.give(to: second, upTo: time)
+            append(texture, to: first, at: time)
+            // The second source's pictures start later
+            if time >= 100.5 { append(texture, to: second, at: time) }
+        }
+        firstSound.give(to: first, upTo: 102)
+        secondSound.give(to: second, upTo: 102)
+        XCTAssertNil(finish(first, at: 102))
+        XCTAssertNil(finish(second, at: 102))
+
+        let firstClicks = try SoundInfo(firstURL).clicks(), secondClicks = try SoundInfo(secondURL).clicks()
+        XCTAssertEqual(firstClicks.count, 1)
+        XCTAssertEqual(secondClicks.count, 1)
+        XCTAssertEqual(try XCTUnwrap(firstClicks.first), 1, accuracy: 0.03)
+        XCTAssertEqual(try XCTUnwrap(firstClicks.first), try XCTUnwrap(secondClicks.first), accuracy: 1.0 / 30)
+    }
+
+    func testAMovieWithoutSoundIsAsBefore() throws {
+        let recorder = MovieRecorder(device: device)
+        let url = try recordWithSound(recorder, name: "silent", settings: settings(), frames: (100, 101),
+                                      sound: [SoundFeed(from: 100, to: 101)], finish: 101)
+
+        XCTAssertFalse(try SoundInfo.hasSound(url))
+        XCTAssertEqual(recorder.soundWritten, 0)
+        XCTAssertEqual(recorder.soundLeftOut, 0)
+        XCTAssertEqual(try sampleCount(url), 30)
+    }
+
+    func testAMovieWhoseSoundNeverCameIsWhole() throws {
+        // An empty audio input is left out by the writer: the movie has its pictures and no sound track
+        let recorder = MovieRecorder(device: device)
+        let url = try recordWithSound(recorder, name: "nosound", settings: soundSettings(), frames: (100, 102), sound: [], finish: 102)
+
+        XCTAssertEqual(try sampleCount(url), 60)
+        XCTAssertEqual(try MovieInfo(url).duration, 2, accuracy: 0.05)
+        XCTAssertFalse(try SoundInfo.hasSound(url))
+        XCTAssertEqual(recorder.soundWritten, 0)
+    }
+
+    func testSoundWhichStopsLeavesTheRestSilentOrShort() throws {
+        let url = try recordWithSound(MovieRecorder(device: device), name: "stops", settings: soundSettings(), frames: (100, 103),
+                                      sound: [SoundFeed(from: 100, to: 101)], finish: 103)
+
+        XCTAssertEqual(try MovieInfo(url).duration, 3, accuracy: 0.05, "the movie plays to its pictures' end")
+        XCTAssertEqual(try sampleCount(url), 90)
+        let sound = try SoundInfo(url)
+        XCTAssertLessThanOrEqual(sound.duration, 3.03)
+        XCTAssertEqual(sound.frequency(from: 0.1, to: 0.9), 1000, accuracy: 5)
+        XCTAssertLessThan(sound.peak(from: 1.1, to: sound.duration), 0.01, "nothing is heard after the sound stopped")
+    }
+
+    func testSoundIsLeftOutRatherThanPiledUp() throws {
+        // No size is given: the movie is made when its first picture comes, and sound waits until then. Ten seconds
+        // of it come at once, each piece with the time it was made: the two seconds which came last are kept.
+        let recorder = MovieRecorder(device: device)
+        let url = folder.appendingPathComponent("pileup.mov")
+        try recorder.startWriting(to: url, settings: soundSettings(), startTime: 100)
+        SoundFeed(from: 100, to: 110).give(to: recorder, upTo: 110)
+        XCTAssertEqual(recorder.soundLeftOut, 8, accuracy: 0.05)
+        XCTAssertEqual(recorder.soundWritten, 0)
+
+        let texture = makeTexture(width: 320, height: 180)
+        for index in 0..<30 { append(texture, to: recorder, at: 110 + Double(index) / 30) }
+        XCTAssertNil(finish(recorder, at: 111))
+
+        XCTAssertEqual(recorder.framesWritten, 30, "the pictures are not held back by the sound")
+        XCTAssertEqual(try sampleCount(url), 30)
+        XCTAssertEqual(recorder.soundLeftOut, 8, accuracy: 0.05)
+        let sound = try SoundInfo(url)
+        XCTAssertEqual(try XCTUnwrap(sound.soundStart()), 8, accuracy: 0.03, "what was kept is in its place, after silence")
+        XCTAssertEqual(sound.frequency(from: 8.1, to: 9.9), 1000, accuracy: 5)
+        XCTAssertEqual(recorder.soundWritten, 10, accuracy: 0.03, "the silence in place of what was left out is written")
+    }
+
+    func testFinishingKeepsTheSoundWrittenSoFar() throws {
+        // Stopped in the middle of a sound: the last pieces are still waiting when the movie is finished
+        let recorder = MovieRecorder(device: device)
+        let url = folder.appendingPathComponent("stopped.mov")
+        try recorder.startWriting(to: url, settings: soundSettings(width: 320, height: 180), startTime: 100)
+        let tone = SoundFeed(from: 100, to: 110)
+        let texture = makeTexture(width: 320, height: 180)
+        for index in 0..<30 {
+            let time = 100 + Double(index) / 30
+            tone.give(to: recorder, upTo: time)
+            append(texture, to: recorder, at: time)
+        }
+        tone.give(to: recorder, upTo: 101.5)
+        XCTAssertNil(finish(recorder, at: 101.5))
+
+        let sound = try SoundInfo(url)
+        XCTAssertEqual(sound.duration, 1.5, accuracy: 0.03)
+        XCTAssertEqual(sound.frequency(from: 1.1, to: 1.45), 1000, accuracy: 10, "the sound which came last is there")
+        XCTAssertEqual(recorder.soundWritten, 1.5, accuracy: 0.03)
+    }
+
+    func testSoundDoesNotCountAsAFrame() throws {
+        // The size is given: the movie's file is made at once, and sound is given to it
+        let url = folder.appendingPathComponent("soundonly.mov")
+        let recorder = MovieRecorder(device: device)
+        try recorder.startWriting(to: url, settings: soundSettings(width: 320, height: 180), startTime: 100)
+        SoundFeed(from: 100, to: 101).give(to: recorder, upTo: 101)
+
+        XCTAssertNotNil(finish(recorder, at: 101), "no frame was received")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: url.path))
+    }
+
+    func testSoundAfterFinishIsIgnored() throws {
+        let recorder = MovieRecorder(device: device)
+        try recordWithSound(recorder, name: "after", settings: soundSettings(), frames: (100, 101),
+                            sound: [SoundFeed(from: 100, to: 101)], finish: 101)
+        let written = recorder.soundWritten
+        SoundFeed(from: 101, to: 102).give(to: recorder, upTo: 102)
+        XCTAssertEqual(recorder.soundWritten, written)
+        XCTAssertEqual(recorder.soundLeftOut, 0)
     }
 }

@@ -29,6 +29,8 @@
 
 #import "MovieRecorder.h"
 #import "FramePacer.h"
+#import "SourceSound.h"
+#import "SoundTimeline.h"
 #import <AVFoundation/AVFoundation.h>
 #import <CoreVideo/CoreVideo.h>
 #import <os/lock.h>
@@ -42,6 +44,12 @@ static const int32_t kTimescale = 60000;
 static const int kEncoderWaitMilliseconds = 500;
 // The frame rate assumed for choosing a bitrate when the recording has no maximum
 static const double kAssumedFramesPerSecond = 60.0;
+// The sound track's rate: the encoder is given nothing else
+static const double kSoundRate = 48000.0;
+// Seconds of sound which may wait for the encoder: beyond, the oldest is left out
+static const NSTimeInterval kMaximumSoundWaiting = 2.0;
+// How long finishing waits for the encoder to take the sound which waits
+static const int kSoundFinishWaitMilliseconds = 1000;
 
 static NSString * const kShaderSource = @"\
 #include <metal_stdlib>\n\
@@ -65,6 +73,15 @@ static NSError *RecorderError(NSString *description)
 {
     return [NSError errorWithDomain:MovieRecorderErrorDomain code:-1 userInfo:@{NSLocalizedDescriptionKey: description}];
 }
+
+// A piece of sound which waits for the encoder, with the time it arrived
+@interface WaitingSound : NSObject
+@property (strong) SourceSound *sound;
+@property (assign) NSTimeInterval time;
+@end
+
+@implementation WaitingSound
+@end
 
 @implementation MovieRecorderSettings
 
@@ -98,6 +115,7 @@ static NSError *RecorderError(NSString *description)
     copy.height = self.height;
     copy.framesPerSecond = self.framesPerSecond;
     copy.megabitsPerSecond = self.megabitsPerSecond;
+    copy.recordsSound = self.recordsSound;
     return copy;
 }
 
@@ -118,6 +136,18 @@ static NSError *RecorderError(NSString *description)
     AVAssetWriterInput *_input;
     AVAssetWriterInputPixelBufferAdaptor *_adaptor;
     CMTime _lastTime;
+    // The sound track, if the movie has one
+    AVAssetWriterInput *_audioInput;
+    CMAudioFormatDescriptionRef _soundFormat;
+    // Made when the movie's time 0 is known
+    SoundTimeline *_soundTimeline;
+    // The rate of the sound being placed, and the converter to 48 kHz if it is another
+    double _soundRate;
+    AVAudioConverter *_converter;
+    // Placed and at 48 kHz, waiting for the encoder
+    NSMutableArray<SourceSound *> *_placedSound;
+    // The sound track's next sample
+    int64_t _soundPosition;
 
     // Guards what follows, which is used from the threads frames arrive on
     os_unfair_lock _lock;
@@ -131,6 +161,13 @@ static NSError *RecorderError(NSString *description)
     NSUInteger _framesDropped;
     NSUInteger _framesPending;
     NSSize _outputSize;
+    BOOL _recordsSound;
+    // Sound which has arrived and waits to be placed and given to the encoder: kMaximumSoundWaiting at most
+    NSMutableArray<WaitingSound *> *_waitingSound;
+    NSTimeInterval _soundWaiting;
+    BOOL _soundWriteScheduled;
+    NSTimeInterval _soundWritten;
+    NSTimeInterval _soundLeftOut;
 }
 
 - (instancetype)initWithDevice:(id<MTLDevice>)device
@@ -143,6 +180,21 @@ static NSError *RecorderError(NSString *description)
         _queue = dispatch_queue_create("net.am-cb.simple.movie-recorder", DISPATCH_QUEUE_SERIAL);
         _framesInFlight = dispatch_group_create();
         _lock = OS_UNFAIR_LOCK_INIT;
+        _placedSound = [NSMutableArray array];
+        _waitingSound = [NSMutableArray array];
+
+        // What the encoder is given: 48 kHz, two channels of interleaved floats
+        AudioStreamBasicDescription description = {
+            .mSampleRate = kSoundRate,
+            .mFormatID = kAudioFormatLinearPCM,
+            .mFormatFlags = kAudioFormatFlagIsFloat | kAudioFormatFlagIsPacked,
+            .mBytesPerPacket = 2 * sizeof(float),
+            .mFramesPerPacket = 1,
+            .mBytesPerFrame = 2 * sizeof(float),
+            .mChannelsPerFrame = 2,
+            .mBitsPerChannel = 32
+        };
+        CMAudioFormatDescriptionCreate(kCFAllocatorDefault, &description, 0, NULL, 0, NULL, NULL, &_soundFormat);
 
         NSError *error = nil;
         id<MTLLibrary> library = [device newLibraryWithSource:kShaderSource options:nil error:&error];
@@ -155,7 +207,7 @@ static NSError *RecorderError(NSString *description)
             _pipeline = [device newRenderPipelineStateWithDescriptor:descriptor error:&error];
         }
         CVMetalTextureCacheCreate(kCFAllocatorDefault, NULL, device, NULL, &_textureCache);
-        if (_pipeline == nil || _textureCache == NULL)
+        if (_pipeline == nil || _textureCache == NULL || _soundFormat == NULL)
         {
             NSLog(@"MovieRecorder could not be created: %@", error);
             return nil;
@@ -169,6 +221,10 @@ static NSError *RecorderError(NSString *description)
     if (_textureCache)
     {
         CFRelease(_textureCache);
+    }
+    if (_soundFormat)
+    {
+        CFRelease(_soundFormat);
     }
 }
 
@@ -204,6 +260,22 @@ static NSError *RecorderError(NSString *description)
     NSUInteger frames = _framesPending;
     os_unfair_lock_unlock(&_lock);
     return frames;
+}
+
+- (NSTimeInterval)soundWritten
+{
+    os_unfair_lock_lock(&_lock);
+    NSTimeInterval written = _soundWritten;
+    os_unfair_lock_unlock(&_lock);
+    return written;
+}
+
+- (NSTimeInterval)soundLeftOut
+{
+    os_unfair_lock_lock(&_lock);
+    NSTimeInterval leftOut = _soundLeftOut;
+    os_unfair_lock_unlock(&_lock);
+    return leftOut;
 }
 
 - (NSSize)outputSize
@@ -274,6 +346,7 @@ static NSError *RecorderError(NSString *description)
         self->_input = nil;
         self->_adaptor = nil;
         self->_lastTime = kCMTimeInvalid;
+        [self forgetSound];
         // Creating the writer takes long enough for a few frames to arrive. When the movie's size is given we do
         // it now, rather than when the first frame arrives, so that the frames which follow it are not lost.
         if (settings.width > 0 && settings.height > 0)
@@ -298,6 +371,11 @@ static NSError *RecorderError(NSString *description)
     _framesWritten = 0;
     _framesDropped = 0;
     _framesPending = 0;
+    _recordsSound = settings.recordsSound;
+    [_waitingSound removeAllObjects];
+    _soundWaiting = 0.0;
+    _soundWritten = 0.0;
+    _soundLeftOut = 0.0;
     _recording = YES;
     os_unfair_lock_unlock(&_lock);
     return YES;
@@ -397,6 +475,20 @@ static NSError *RecorderError(NSString *description)
         return RecorderError(@"The movie file could not be set up");
     }
     [writer addInput:input];
+
+    // The sound track is made now, whatever the source sends: its format cannot change once the movie is begun
+    AVAssetWriterInput *audioInput = nil;
+    if (_settings.recordsSound)
+    {
+        audioInput = [[AVAssetWriterInput alloc] initWithMediaType:AVMediaTypeAudio outputSettings:[self soundOutputSettings]];
+        audioInput.expectsMediaDataInRealTime = YES;
+        if (![writer canAddInput:audioInput])
+        {
+            return RecorderError(@"The movie's sound track could not be set up");
+        }
+        [writer addInput:audioInput];
+    }
+
     if (![writer startWriting])
     {
         NSError *startError = writer.error ?: RecorderError(@"The movie file could not be written");
@@ -418,11 +510,38 @@ static NSError *RecorderError(NSString *description)
     _writer = writer;
     _input = input;
     _adaptor = adaptor;
+    _audioInput = audioInput;
 
     os_unfair_lock_lock(&_lock);
     _outputSize = NSMakeSize(width, height);
     os_unfair_lock_unlock(&_lock);
     return nil;
+}
+
+- (NSDictionary *)soundOutputSettings
+{
+    AudioChannelLayout layout = {.mChannelLayoutTag = kAudioChannelLayoutTag_Stereo};
+    NSData *layoutData = [NSData dataWithBytes:&layout length:sizeof(layout)];
+    if (_settings.codec == MovieCodecProRes422 || _settings.codec == MovieCodecProRes4444)
+    {
+        return @{
+            AVFormatIDKey: @(kAudioFormatLinearPCM),
+            AVSampleRateKey: @(kSoundRate),
+            AVNumberOfChannelsKey: @2,
+            AVChannelLayoutKey: layoutData,
+            AVLinearPCMBitDepthKey: @24,
+            AVLinearPCMIsFloatKey: @NO,
+            AVLinearPCMIsBigEndianKey: @NO,
+            AVLinearPCMIsNonInterleaved: @NO
+        };
+    }
+    return @{
+        AVFormatIDKey: @(kAudioFormatMPEG4AAC),
+        AVSampleRateKey: @(kSoundRate),
+        AVNumberOfChannelsKey: @2,
+        AVChannelLayoutKey: layoutData,
+        AVEncoderBitRateKey: @256000
+    };
 }
 
 #pragma mark Frames
@@ -591,8 +710,10 @@ static NSError *RecorderError(NSString *description)
     BOOL writing = pixelBuffer && inOrder && _writer.status == AVAssetWriterStatusWriting;
     // Give the encoder a moment if it is busy. Frames which arrive meanwhile wait behind this one, and beyond
     // kMaximumFramesPending they are dropped as they arrive, so a slow encoder costs frames but never memory.
+    // The writer may be waiting for sound to go with the pictures: the sound which waits is given meanwhile.
     for (int waited = 0; writing && !_input.readyForMoreMediaData && waited < kEncoderWaitMilliseconds; waited++)
     {
+        [self writeWaitingSound];
         usleep(1000);
         writing = _writer.status == AVAssetWriterStatusWriting;
     }
@@ -605,6 +726,8 @@ static NSError *RecorderError(NSString *description)
         }
     }
     [self frameDoneWritten:written];
+    // The encoder may take sound again now that it has this picture, and the movie's time 0 may just be known
+    [self writeWaitingSound];
 
     if (_writer.status == AVAssetWriterStatusFailed && self.recording)
     {
@@ -636,6 +759,7 @@ static NSError *RecorderError(NSString *description)
     _writer = nil;
     _input = nil;
     _adaptor = nil;
+    [self forgetSound];
     // Frames still on their way belong to this recording: another can start once they have left
     dispatch_group_notify(_framesInFlight, _queue, ^{
         os_unfair_lock_lock(&self->_lock);
@@ -648,6 +772,273 @@ static NSError *RecorderError(NSString *description)
             self.failureHandler(error);
         }
     });
+}
+
+#pragma mark Sound
+
+- (void)appendSound:(SourceSound *)sound atTime:(NSTimeInterval)time
+{
+    WaitingSound *waiting = [[WaitingSound alloc] init];
+    waiting.sound = sound;
+    waiting.time = time;
+
+    os_unfair_lock_lock(&_lock);
+    if (!_recording || !_recordsSound)
+    {
+        os_unfair_lock_unlock(&_lock);
+        return;
+    }
+    [_waitingSound addObject:waiting];
+    _soundWaiting += sound.duration;
+    // The encoder is behind, or the movie is not made yet: the oldest sound is left out, and the timeline puts
+    // silence in its place when sound is written again. (A millionth of a second for the sums of durations.)
+    while (_waitingSound.count > 0 && _soundWaiting > kMaximumSoundWaiting + 1e-6)
+    {
+        NSTimeInterval duration = _waitingSound[0].sound.duration;
+        [_waitingSound removeObjectAtIndex:0];
+        _soundWaiting -= duration;
+        _soundLeftOut += duration;
+    }
+    BOOL schedule = !_soundWriteScheduled;
+    _soundWriteScheduled = YES;
+    os_unfair_lock_unlock(&_lock);
+
+    if (schedule)
+    {
+        dispatch_async(_queue, ^{
+            // Cleared first: sound which arrives from now on schedules another
+            os_unfair_lock_lock(&self->_lock);
+            self->_soundWriteScheduled = NO;
+            os_unfair_lock_unlock(&self->_lock);
+            [self writeWaitingSound];
+        });
+    }
+}
+
+// On the recorder's queue. Gives the encoder the sound which waits, as much of it as it takes now. Never waits for
+// the encoder, as pictures are written on this queue: it is called again after each picture, while a picture waits
+// for the encoder, when sound arrives, and when the movie is finished.
+- (void)writeWaitingSound
+{
+    if (_audioInput == nil || _writer.status != AVAssetWriterStatusWriting)
+    {
+        // No sound track, or not made yet: the sound waits
+        return;
+    }
+    if (_soundTimeline == nil)
+    {
+        os_unfair_lock_lock(&_lock);
+        BOOL known = _hasFirstFrame;
+        NSTimeInterval origin = _firstFrameTime;
+        os_unfair_lock_unlock(&_lock);
+        if (!known)
+        {
+            // The movie's time 0 is that of its first frame, which has not come
+            return;
+        }
+        _soundTimeline = [[SoundTimeline alloc] initWithOrigin:origin];
+    }
+    while (YES)
+    {
+        while (_placedSound.count > 0 && _audioInput.readyForMoreMediaData)
+        {
+            if (![self appendPlacedSound:_placedSound[0]])
+            {
+                // The writer failed: the pictures report it
+                return;
+            }
+            [_placedSound removeObjectAtIndex:0];
+        }
+        if (_placedSound.count > 0 || !_audioInput.readyForMoreMediaData)
+        {
+            return;
+        }
+        os_unfair_lock_lock(&_lock);
+        WaitingSound *next = _waitingSound.firstObject;
+        if (next)
+        {
+            [_waitingSound removeObjectAtIndex:0];
+            _soundWaiting -= next.sound.duration;
+        }
+        os_unfair_lock_unlock(&_lock);
+        if (next == nil)
+        {
+            return;
+        }
+        [self placeSound:next.sound arrivedAtTime:next.time];
+    }
+}
+
+// On the recorder's queue. Puts a piece on the movie's clock, at 48 kHz, among the sound placed.
+- (void)placeSound:(SourceSound *)sound arrivedAtTime:(NSTimeInterval)time
+{
+    if (sound.sampleRate != _soundRate)
+    {
+        // The encoder converts only from the first rate it is given: we convert, so that a source which changes
+        // rate keeps its pitch
+        [self endSoundRun];
+        _soundRate = sound.sampleRate;
+        if (_soundRate != kSoundRate)
+        {
+            AVAudioFormat *from = [[AVAudioFormat alloc] initWithCommonFormat:AVAudioPCMFormatFloat32 sampleRate:_soundRate channels:2 interleaved:YES];
+            AVAudioFormat *to = [[AVAudioFormat alloc] initWithCommonFormat:AVAudioPCMFormatFloat32 sampleRate:kSoundRate channels:2 interleaved:YES];
+            _converter = [[AVAudioConverter alloc] initFromFormat:from toFormat:to];
+        }
+    }
+    for (SourceSound *piece in [_soundTimeline piecesForSound:sound arrivedAtTime:time])
+    {
+        SourceSound *placed = _converter ? [self convertSound:piece] : piece;
+        if (placed)
+        {
+            [_placedSound addObject:placed];
+        }
+    }
+}
+
+// On the recorder's queue. The end of a run of one rate: what the converter holds back of it is placed.
+- (void)endSoundRun
+{
+    if (_converter)
+    {
+        SourceSound *rest = [self convertSound:nil];
+        if (rest)
+        {
+            [_placedSound addObject:rest];
+        }
+        _converter = nil;
+    }
+    _soundRate = 0.0;
+}
+
+// A piece at 48 kHz, or for nil the end of the run. The converter keeps the timing (its prime method is "normal"),
+// holding back its last few samples until the end of the run. nil if nothing comes out.
+- (nullable SourceSound *)convertSound:(nullable SourceSound *)sound
+{
+    AVAudioPCMBuffer *input = nil;
+    if (sound)
+    {
+        input = [[AVAudioPCMBuffer alloc] initWithPCMFormat:_converter.inputFormat frameCapacity:(AVAudioFrameCount)sound.frameCount];
+        input.frameLength = (AVAudioFrameCount)sound.frameCount;
+        memcpy(input.floatChannelData[0], sound.samples, sound.frameCount * 2 * sizeof(float));
+    }
+    AVAudioFrameCount capacity = (AVAudioFrameCount)ceil(sound.frameCount * kSoundRate / _soundRate) + 1024;
+    NSMutableData *samples = [NSMutableData data];
+    __block BOOL given = NO;
+    AVAudioConverterOutputStatus status;
+    do
+    {
+        AVAudioPCMBuffer *output = [[AVAudioPCMBuffer alloc] initWithPCMFormat:_converter.outputFormat frameCapacity:capacity];
+        NSError *error = nil;
+        status = [_converter convertToBuffer:output error:&error withInputFromBlock:^AVAudioBuffer *(AVAudioPacketCount count, AVAudioConverterInputStatus *inputStatus) {
+            if (input == nil)
+            {
+                *inputStatus = AVAudioConverterInputStatus_EndOfStream;
+                return nil;
+            }
+            if (given)
+            {
+                *inputStatus = AVAudioConverterInputStatus_NoDataNow;
+                return nil;
+            }
+            given = YES;
+            *inputStatus = AVAudioConverterInputStatus_HaveData;
+            return input;
+        }];
+        if (status == AVAudioConverterOutputStatus_Error)
+        {
+            NSLog(@"MovieRecorder could not convert sound: %@", error);
+            break;
+        }
+        [samples appendBytes:output.floatChannelData[0] length:output.frameLength * 2 * sizeof(float)];
+    }
+    while (status == AVAudioConverterOutputStatus_HaveData);
+    return [SourceSound soundWithInterleavedStereoSamples:samples.bytes frameCount:samples.length / (2 * sizeof(float)) sampleRate:kSoundRate];
+}
+
+// On the recorder's queue. NO if the encoder refused it.
+- (BOOL)appendPlacedSound:(SourceSound *)sound
+{
+    size_t length = sound.frameCount * 2 * sizeof(float);
+    CMBlockBufferRef block = NULL;
+    CMSampleBufferRef sample = NULL;
+    OSStatus status = CMBlockBufferCreateWithMemoryBlock(kCFAllocatorDefault, NULL, length, kCFAllocatorDefault, NULL, 0, length,
+                                                         kCMBlockBufferAssureMemoryNowFlag, &block);
+    if (status == noErr)
+    {
+        status = CMBlockBufferReplaceDataBytes(sound.samples, block, 0, length);
+    }
+    if (status == noErr)
+    {
+        status = CMAudioSampleBufferCreateReadyWithPacketDescriptions(kCFAllocatorDefault, block, _soundFormat, (CMItemCount)sound.frameCount,
+                                                                      CMTimeMake(_soundPosition, (int32_t)kSoundRate), NULL, &sample);
+    }
+    BOOL appended = status == noErr && [_audioInput appendSampleBuffer:sample];
+    if (sample) CFRelease(sample);
+    if (block) CFRelease(block);
+    if (appended)
+    {
+        _soundPosition += sound.frameCount;
+        os_unfair_lock_lock(&_lock);
+        _soundWritten += sound.duration;
+        os_unfair_lock_unlock(&_lock);
+    }
+    return appended;
+}
+
+// On the recorder's queue, when the movie is finished: the sound which waits is written, the encoder given a
+// moment to take it. What it does not take in time is left out.
+- (void)writeLastSound
+{
+    if (_audioInput == nil)
+    {
+        return;
+    }
+    BOOL ended = NO;
+    for (int waited = 0; _writer.status == AVAssetWriterStatusWriting; waited++)
+    {
+        [self writeWaitingSound];
+        os_unfair_lock_lock(&_lock);
+        BOOL waiting = _waitingSound.count > 0;
+        os_unfair_lock_unlock(&_lock);
+        if (!waiting && !ended && _soundTimeline)
+        {
+            [self endSoundRun];
+            ended = YES;
+            [self writeWaitingSound];
+        }
+        if (!waiting && _placedSound.count == 0)
+        {
+            return;
+        }
+        if (waited >= kSoundFinishWaitMilliseconds)
+        {
+            break;
+        }
+        usleep(1000);
+    }
+    NSTimeInterval leftOut = 0.0;
+    for (SourceSound *sound in _placedSound)
+    {
+        leftOut += sound.duration;
+    }
+    os_unfair_lock_lock(&_lock);
+    _soundLeftOut += leftOut + _soundWaiting;
+    os_unfair_lock_unlock(&_lock);
+}
+
+// On the recorder's queue: the sound of the movie which ends is forgotten
+- (void)forgetSound
+{
+    _audioInput = nil;
+    _soundTimeline = nil;
+    _soundRate = 0.0;
+    _converter = nil;
+    [_placedSound removeAllObjects];
+    _soundPosition = 0;
+    os_unfair_lock_lock(&_lock);
+    [_waitingSound removeAllObjects];
+    _soundWaiting = 0.0;
+    os_unfair_lock_unlock(&_lock);
 }
 
 #pragma mark Finishing
@@ -685,11 +1076,19 @@ static NSError *RecorderError(NSString *description)
     dispatch_group_notify(_framesInFlight, _queue, ^{
         AVAssetWriter *writer = self->_writer;
         AVAssetWriterInput *input = self->_input;
+        AVAssetWriterInput *audioInput = self->_audioInput;
+        BOOL hasFrames = writer != nil && CMTIME_IS_VALID(self->_lastTime);
+        if (hasFrames)
+        {
+            [self writeLastSound];
+        }
+        [self forgetSound];
         self->_writer = nil;
         self->_input = nil;
         self->_adaptor = nil;
 
-        if (writer == nil || !CMTIME_IS_VALID(self->_lastTime))
+        // Sound alone is not a movie: it has no file. (Its writer has no frame, so cancelling loses nothing.)
+        if (!hasFrames)
         {
             [writer cancelWriting];
             finished(RecorderError(@"No frame was received, so no movie was written"));
@@ -700,6 +1099,7 @@ static NSError *RecorderError(NSString *description)
         CMTime end = CMTimeMakeWithSeconds(elapsed, kTimescale);
         CMTime minimum = CMTimeAdd(self->_lastTime, CMTimeMake(kTimescale / 240, kTimescale));
         [input markAsFinished];
+        [audioInput markAsFinished];
         [writer endSessionAtSourceTime:CMTimeMaximum(end, minimum)];
         [writer finishWritingWithCompletionHandler:^{
             finished(writer.status == AVAssetWriterStatusCompleted ? nil : (writer.error ?: RecorderError(@"The movie could not be finished")));

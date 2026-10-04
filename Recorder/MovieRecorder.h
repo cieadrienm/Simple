@@ -30,6 +30,8 @@
 #import <Foundation/Foundation.h>
 #import <Metal/Metal.h>
 
+@class SourceSound;
+
 NS_ASSUME_NONNULL_BEGIN
 
 typedef NS_ENUM(NSInteger, MovieCodec) {
@@ -50,6 +52,8 @@ extern NSString * const MovieRecorderErrorDomain;
 @property (assign) double framesPerSecond;
 // For H.264 and HEVC. 0 chooses a bitrate from the movie's size and frame rate.
 @property (assign) double megabitsPerSecond;
+// The movie has a sound track: AAC (256 kbit/s) with h264 and hevc, linear PCM (24 bits) with ProRes; 48 kHz, two channels.
+@property (assign) BOOL recordsSound;
 // "h264", "hevc", "prores422", "prores4444"
 + (NSArray<NSString *> *)codecNames;
 + (NSString *)nameForCodec:(MovieCodec)codec;
@@ -61,6 +65,10 @@ extern NSString * const MovieRecorderErrorDomain;
 
  Frames are scaled to fit the movie's size on the GPU and encoded away from the caller's thread. If the encoder cannot
  keep up frames are dropped rather than delaying the caller.
+
+ Sound, if the movie records it, is placed on the movie's clock by a SoundTimeline and converted to 48 kHz. It never
+ holds pictures back: while the encoder cannot take it, it waits, two seconds of it at most, and beyond that the
+ oldest is left out and silence takes its place. A movie whose sound never came has no sound track.
  */
 @interface MovieRecorder : NSObject
 - (instancetype)initWithDevice:(id<MTLDevice>)device;
@@ -82,9 +90,12 @@ extern NSString * const MovieRecorderErrorDomain;
 // While the encoder is behind, the frame is not wanted either, and is counted as dropped: a picture made for the
 // recorder (a composite) must not be made, as making it may draw over one which is still waiting to be read.
 - (BOOL)wantsFrameAtTime:(NSTimeInterval)time;
+// A piece of sound which arrived at a time on the clock of appendTexture:flipped:atTime:. Any thread; returns at once.
+// Does nothing if the movie has no sound track or is not recording.
+- (void)appendSound:(SourceSound *)sound atTime:(NSTimeInterval)time;
 // Stops accepting frames, waits for those being encoded, and finishes the file so that the movie lasts until time.
-// handler is called on the main queue, with an error if the movie could not be written. If no frame was received
-// there is no file, and that is reported as an error.
+// The sound which waits is written first. handler is called on the main queue, with an error if the movie could not
+// be written. If no frame was received there is no file, and that is reported as an error, whatever sound came.
 - (void)finishAtTime:(NSTimeInterval)time completionHandler:(void (^)(NSError * _Nullable error))handler;
 @property (readonly, getter=isRecording) BOOL recording;
 @property (readonly) NSUInteger framesWritten;
@@ -92,6 +103,10 @@ extern NSString * const MovieRecorderErrorDomain;
 @property (readonly) NSUInteger framesDropped;
 // Frames accepted which are not yet written or dropped
 @property (readonly) NSUInteger framesPending;
+// Seconds of sound given to the sound track, silence included
+@property (readonly) NSTimeInterval soundWritten;
+// Seconds of sound left out because the encoder could not take them in time
+@property (readonly) NSTimeInterval soundLeftOut;
 // The size of the movie: zero until the first frame has arrived
 @property (readonly) NSSize outputSize;
 // Called on the main queue if writing fails. The recorder has then stopped recording.
