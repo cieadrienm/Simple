@@ -379,7 +379,13 @@ final class TakeTests: XCTestCase {
         let white = [UInt8](repeating: 255, count: 320 * 180 * 4)
         opaque.replace(region: MTLRegionMake2D(0, 0, 320, 180), mipmapLevel: 0, withBytes: white, bytesPerRow: 320 * 4)
         for index in 0..<5 {
-            let picture = try XCTUnwrap(compositor.compose(layout, textures: [opaque, opaque], flipped: [false, false], transparent: true))
+            // Given to the take once it is drawn, as the controller does: the take reads it with a queue of its own,
+            // and reading it earlier may find what the texture held before (seen once: an opaque picture)
+            let drawn = expectation(description: "drawn")
+            let picture = try XCTUnwrap(compositor.compose(layout, textures: [opaque, opaque], flipped: [false, false], transparent: true) { _ in
+                drawn.fulfill()
+            })
+            wait(for: [drawn], timeout: 5)
             appendAssembled(picture, at: 100 + Double(index) / 30)
         }
         XCTAssertNil(finish(at: 100.2))

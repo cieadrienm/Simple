@@ -14,3 +14,4 @@ The first numbered version.
 - The picture shown follows every frame of its source, at the display's rate.
 - Performance mode: while recording, the picture is shown ten times a second, to leave the GPU to the movies.
 - A new icon.
+- The recorder takes its pixel buffers from a pool of its own rather than the encoder's, after two crashes of the test process there.

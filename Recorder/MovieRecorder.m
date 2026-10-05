@@ -51,8 +51,9 @@ static const NSTimeInterval kMaximumSoundWaiting = 2.0;
 // The same while silence is owed for a gap: the encoder takes about 340 s of AAC silence a second, so an hour's gap
 // keeps the sound which comes back waiting for some ten seconds, which must not be left out
 static const NSTimeInterval kMaximumSoundWaitingBehindSilence = 30.0;
-// How long finishing waits for an encoder which takes nothing more
-static const int kSoundFinishWaitMilliseconds = 1000;
+// How long finishing waits for an encoder which takes nothing more. (It was one second: on a busy machine the last
+// tenth of a second of a take's sound was left out.)
+static const int kSoundFinishWaitMilliseconds = 5000;
 // The most silence given to the encoder at once, in samples of the sound track: a long gap is given a second at a
 // time, so that it never holds the pictures back
 static const int64_t kLongestSilenceWritten = 48000;
@@ -141,6 +142,11 @@ static NSError *RecorderError(NSString *description)
     AVAssetWriter *_writer;
     AVAssetWriterInput *_input;
     AVAssetWriterInputPixelBufferAdaptor *_adaptor;
+    // The pictures given to the adaptor come from a pool of our own, not from the adaptor's: that one is also used by
+    // the encoder, on its own threads, and reading it from here has crashed (a freed object inside the pool, twice,
+    // in CVPixelBufferPoolCreatePixelBuffer while VideoToolbox was creating from a pool at the same moment).
+    // Made with the writer, let go with it, on the queue.
+    CVPixelBufferPoolRef _pool;
     CMTime _lastTime;
     // The sound track, if the movie has one
     AVAssetWriterInput *_audioInput;
@@ -226,8 +232,16 @@ static NSError *RecorderError(NSString *description)
     return self;
 }
 
+// On the queue (or when nothing else can run: dealloc)
+- (void)forgetPool
+{
+    CVPixelBufferPoolRelease(_pool);
+    _pool = NULL;
+}
+
 - (void)dealloc
 {
+    CVPixelBufferPoolRelease(_pool);
     if (_textureCache)
     {
         CFRelease(_textureCache);
@@ -355,6 +369,7 @@ static NSError *RecorderError(NSString *description)
         self->_writer = nil;
         self->_input = nil;
         self->_adaptor = nil;
+        [self forgetPool];
         self->_lastTime = kCMTimeInvalid;
         [self forgetSound];
         // Creating the writer takes long enough for a few frames to arrive. When the movie's size is given we do
@@ -509,14 +524,18 @@ static NSError *RecorderError(NSString *description)
 
     // The writer accepts sizes for which no picture can be allocated: find out now rather than at every frame
     CVPixelBufferRef probe = NULL;
-    CVPixelBufferPoolRef pool = adaptor.pixelBufferPool;
+    CVPixelBufferPoolRef pool = NULL;
+    CVPixelBufferPoolCreate(kCFAllocatorDefault, NULL, (__bridge CFDictionaryRef)bufferAttributes, &pool);
     if (pool == NULL || CVPixelBufferPoolCreatePixelBuffer(kCFAllocatorDefault, pool, &probe) != kCVReturnSuccess)
     {
+        CVPixelBufferPoolRelease(pool);
         [writer cancelWriting];
         return RecorderError([NSString stringWithFormat:@"A movie of %ld \u00D7 %ld cannot be written", (long)width, (long)height]);
     }
     CVPixelBufferRelease(probe);
 
+    [self forgetPool];
+    _pool = pool;
     _writer = writer;
     _input = input;
     _adaptor = adaptor;
@@ -651,10 +670,9 @@ static NSError *RecorderError(NSString *description)
 
     CVPixelBufferRef pixelBuffer = NULL;
     CVMetalTextureRef target = NULL;
-    CVPixelBufferPoolRef pool = _adaptor.pixelBufferPool;
-    if (pool)
+    if (_pool)
     {
-        CVPixelBufferPoolCreatePixelBuffer(kCFAllocatorDefault, pool, &pixelBuffer);
+        CVPixelBufferPoolCreatePixelBuffer(kCFAllocatorDefault, _pool, &pixelBuffer);
     }
     if (pixelBuffer)
     {
@@ -769,6 +787,7 @@ static NSError *RecorderError(NSString *description)
     _writer = nil;
     _input = nil;
     _adaptor = nil;
+    [self forgetPool];
     [self forgetSound];
     // Frames still on their way belong to this recording: another can start once they have left
     dispatch_group_notify(_framesInFlight, _queue, ^{
@@ -1221,6 +1240,7 @@ static NSError *RecorderError(NSString *description)
         self->_writer = nil;
         self->_input = nil;
         self->_adaptor = nil;
+        [self forgetPool];
 
         // Sound alone is not a movie: it has no file. (Its writer has no frame, so cancelling loses nothing.)
         if (!hasFrames)
