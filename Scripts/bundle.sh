@@ -10,6 +10,10 @@
 # with Syphon's framework and the MCP tool. Simple Server is built from its Xcode project.
 set -e
 cd "$(dirname "$0")/.."
+# The version shown by the Finder, About and /status/version: bump it here, and only here (CHANGELOG.md says what
+# changed; a release is tagged vX.Y.Z). The build number counts commits.
+VERSION="1.0.0"
+BUILD="$(git rev-list --count HEAD 2>/dev/null || echo 1)"
 
 Scripts/syphon.sh
 swift build -c release --arch arm64 --arch x86_64 --product SimpleRecorder
@@ -20,6 +24,8 @@ APP="build/Simple Recorder.app"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Frameworks" "$APP/Contents/Resources"
 cp Resources/Info.plist "$APP/Contents/Info.plist"
+# Stamped in the bundle's copy only: Resources/Info.plist keeps the placeholders
+sed -i '' -e "s/@VERSION@/$VERSION/" -e "s/@BUILD@/$BUILD/" "$APP/Contents/Info.plist"
 cp Resources/icon.icns "$APP/Contents/Resources/"
 cp "$PRODUCTS/SimpleRecorder" "$APP/Contents/MacOS/Simple Recorder"
 cp "$PRODUCTS/simple-recorder-mcp" "$APP/Contents/MacOS/"

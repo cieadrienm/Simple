@@ -15,6 +15,7 @@ est toujours là. Adrien (spectacle vivant, app eMotion) est l'unique utilisateu
 - Répondre en français. Code, commentaires et commits en anglais, avec la ligne `Co-Authored-By` de l'harnais.
 - `git push origin master` pousse sur GitHub (`cieadrienm/Simple`, privé) **et** sur Gitea (`amcb/simple`). `upstream` = `Syphon/Simple`.
 - Fichiers dérivés de Syphon : garder leur en-tête BSD. Fichiers neufs : même licence, copyright Adrien Mondot.
+- Version : `VERSION` dans `Scripts/bundle.sh`, changée là seulement (correctif : x.y.Z ; fonction : x.Y.0), avec une ligne dans `CHANGELOG.md` et un tag git `vX.Y.Z` quand Adrien déploie (D76).
 
 ## Build et tests
 ```

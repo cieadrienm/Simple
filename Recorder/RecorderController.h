@@ -131,6 +131,14 @@ extern const double RecorderLimitedDisplayRate;
 // These return NO, with the reason in error, if there is no such source or place, if every place is taken, or
 // while recording.
 
+// /status/version: the version of the app, CFBundleShortVersionString of the main bundle when it is an application
+// (Scripts/bundle.sh stamps it), "dev" otherwise (swift run, swift test) or while it is still the placeholder
+@property (readonly, copy) NSString *version;
+// What version is for a bundle at this path with this Info.plist
+// (named apart in Swift, where it would clash with the property)
++ (NSString *)versionOfBundleAtPath:(NSString *)path info:(nullable NSDictionary<NSString *, id> *)info
+    NS_SWIFT_NAME(bundleVersion(atPath:info:));
+
 // State
 @property (readonly, copy) NSString *state;       // /status/state: "idle", "recording" or "finishing"
 @property (readonly, getter=isRecording) BOOL recording;

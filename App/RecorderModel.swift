@@ -109,6 +109,8 @@ final class RecorderModel: ObservableObject {
     @Published private(set) var performance = false
     /// Whether it is held back now: performance is on and a take is in progress
     @Published private(set) var displayIsLimited = false
+    /// The app's version, as 1.0.0, or "dev" outside its bundle
+    @Published private(set) var version = ""
     /// Bytes free on the disk of the folder, nil if it cannot be told
     @Published private(set) var freeSpace: Int64?
 
@@ -196,6 +198,7 @@ final class RecorderModel: ObservableObject {
         set(\.failure, controller.recordingError)
         set(\.sound, controller.sound)
         set(\.soundLeftOut, (controller.soundLeftOut * 10).rounded() / 10)
+        set(\.version, controller.version)
         set(\.performance, controller.performance)
         set(\.displayIsLimited, controller.displayIsLimited)
 

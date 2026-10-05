@@ -1011,6 +1011,29 @@ final class RecorderControllerTests: XCTestCase {
         XCTAssertGreaterThan(after, 105, "after the take: \(after) pictures for about 120 frames")
     }
 
+    // MARK: Version
+
+    func testTheVersionIsTheBundlesOrDev() {
+        // Under swift test the main bundle is xctest's, which is no application
+        XCTAssertEqual(controller.version, "dev")
+        XCTAssertEqual(RecorderController.bundleVersion(atPath: "/Applications/Simple Recorder.app", info: ["CFBundleShortVersionString": "1.0.0"]), "1.0.0")
+        XCTAssertEqual(RecorderController.bundleVersion(atPath: "/Applications/Simple Recorder.app", info: ["CFBundleShortVersionString": "@VERSION@"]), "dev")
+        XCTAssertEqual(RecorderController.bundleVersion(atPath: "/Applications/Simple Recorder.app", info: [:]), "dev")
+        XCTAssertEqual(RecorderController.bundleVersion(atPath: "/Applications/Simple Recorder.app", info: nil), "dev")
+        XCTAssertEqual(RecorderController.bundleVersion(atPath: "/usr/bin", info: ["CFBundleShortVersionString": "16.0"]), "dev")
+    }
+
+    func testOSCQueryTellsTheVersion() {
+        XCTAssertTrue(controller.startNetwork(withOSCPort: 19470, queryPort: 19471, name: "Recorder Test"))
+        let version = get("/status/version")
+        XCTAssertEqual(version["TYPE"] as? String, "s")
+        XCTAssertEqual(version["VALUE"] as? [String], ["dev"])
+        XCTAssertEqual(version["ACCESS"] as? Int, 1)
+        XCTAssertFalse((version["DESCRIPTION"] as? String ?? "").isEmpty)
+        send("/status/version", "2.0")
+        XCTAssertTrue(controller.error.contains("/status/version"), controller.error)
+    }
+
     func testOSCQueryDescribesPerformance() throws {
         XCTAssertTrue(controller.startNetwork(withOSCPort: 19460, queryPort: 19461, name: "Recorder Test"))
         send("/performance", NSNumber(value: 1))
@@ -1867,7 +1890,7 @@ final class RecorderControllerTests: XCTestCase {
         XCTAssertEqual(((places["2"] as? [String: Any])?["RANGE"] as? [[String: [String]]])?.first?["VALS"], all)
 
         let status = contents(root["status"])
-        XCTAssertEqual(Set(status.keys), ["state", "elapsed", "frames", "dropped", "file", "error", "failure", "source", "assembled", "ndi", "sound"])
+        XCTAssertEqual(Set(status.keys), ["state", "elapsed", "frames", "dropped", "file", "error", "failure", "source", "assembled", "ndi", "sound", "version"])
         XCTAssertEqual(Set(contents(status["sound"]).keys), ["written", "leftout"])
         XCTAssertEqual((status["state"] as? [String: Any])?["VALUE"] as? [String], ["idle"])
         let placeStatus = contents(contents(status["source"])["1"])

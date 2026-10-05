@@ -49,6 +49,8 @@ struct StatusBar: View {
                 Text(model.failure).foregroundStyle(Theme.record).lineLimit(1)
             }
             Text(summary)
+            Text(model.version == "dev" ? "dev" : "v\(model.version)")
+                .help("The version of Simple Recorder")
         }
         .font(Theme.mono(10))
         .foregroundStyle(Theme.textFaint)

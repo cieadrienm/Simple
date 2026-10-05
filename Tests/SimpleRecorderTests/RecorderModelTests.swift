@@ -386,4 +386,10 @@ final class RecorderModelTests: XCTestCase {
         XCTAssertFalse(model.isRecording)
         XCTAssertFalse(model.displayIsLimited)
     }
+
+    func testTheVersionIsPublished() {
+        // Outside an application bundle, as under swift test
+        XCTAssertEqual(model.version, "dev")
+        XCTAssertEqual(model.version, recorder.controller.version)
+    }
 }
