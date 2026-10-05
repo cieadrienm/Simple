@@ -82,7 +82,7 @@ Simple Recorder listens for OSC on UDP port **9230** and describes its parameter
 | `/gap` | int | read, write | Pixels between the sources in the assembled picture, up to 1000 |
 | `/width`, `/height` | int | read, write | The size the assembled picture is fitted into; 0 for the size the sources need |
 | `/sound` | string | read, write | The source whose sound the assembled movie takes: its title, or part of it, among the sources chosen; empty for none (the default). OSCQuery lists the titles as its `RANGE`. |
-| `/performance` | int | read, write | 1: while recording, the picture shown in the window is composed and drawn ten times a second, to leave the GPU to the movies; 0 (the default): every frame. Any number but 0 counts as 1. It applies at once. |
+| `/performance` | int | read, write | 1: while recording, the picture in the window is drawn ten times a second, and composed only that often when no assembled movie needs it at every frame, to leave the GPU to the movies; 0 (the default): every frame. Any number but 0 counts as 1. It applies at once. |
 | `/status/version` | string | read | The version of Simple Recorder, as `1.0.0`; `dev` when it is not run from its application |
 | `/status/state` | string | read | `idle`, `recording`, or `finishing` while the movies are completed |
 | `/status/elapsed` | float | read | Seconds recorded |

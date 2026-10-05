@@ -26,6 +26,10 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Frameworks" "$APP/Contents/Resourc
 cp Resources/Info.plist "$APP/Contents/Info.plist"
 # Stamped in the bundle's copy only: Resources/Info.plist keeps the placeholders
 sed -i '' -e "s/@VERSION@/$VERSION/" -e "s/@BUILD@/$BUILD/" "$APP/Contents/Info.plist"
+if grep -q '@VERSION@\|@BUILD@' "$APP/Contents/Info.plist"; then
+    echo "error: the version was not stamped into the app's Info.plist" >&2
+    exit 1
+fi
 cp Resources/icon.icns "$APP/Contents/Resources/"
 cp "$PRODUCTS/SimpleRecorder" "$APP/Contents/MacOS/Simple Recorder"
 cp "$PRODUCTS/simple-recorder-mcp" "$APP/Contents/MacOS/"

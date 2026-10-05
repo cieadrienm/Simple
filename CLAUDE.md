@@ -20,7 +20,7 @@ est toujours là. Adrien (spectacle vivant, app eMotion) est l'unique utilisateu
 ## Build et tests
 ```
 Scripts/syphon.sh             # une fois : build/Syphon.xcframework, dont Package.swift a besoin
-swift test                    # tout sauf Simple Server, ~3 min 30 (339 tests) ; dessine aussi la fenêtre dans build/views/*.png
+swift test                    # tout sauf Simple Server, ~3 min 50 (357 tests) ; dessine aussi la fenêtre dans build/views/*.png
 Scripts/bundle.sh             # build/Simple Recorder.app (signée, MCP dedans) et build/Simple Server.app
 Tools/build.sh                # outils de vérification → build/tools
 ```
@@ -33,7 +33,7 @@ Simple Server se construit depuis `Simple.xcworkspace`.
   avec des `Simple Server -ServerName A` (B, C…) comme sources ; pour NDI, `build/tools/ndi-send <nom> [largeur hauteur fps] [--bgrx]` (lancé par soi, tué par PID).
   Simple Server ne publie rien quand l'écran dort : sans écran allumé, prendre `ndi-send` ou un émetteur Syphon qui dessine sur un minuteur.
 - **Les réglages et les sources envoyés en OSC sont enregistrés dans les préférences d'Adrien** (`net.am-cb.simple-recorder`) :
-  les remettre à la fin (vider les places : huit fois `/source/1 ""` ; `/output separate`, `/layout row`, `/gap 0`, `/width 0`, `/height 0`), ou passer par des arguments (`-RecorderName x`), qui ne sont pas enregistrés.
+  les remettre à la fin (vider les places : huit fois `/source/1 ""` ; `/output separate`, `/layout row`, `/gap 0`, `/width 0`, `/height 0`, `/sound ""`, `/performance 0`), ou passer par des arguments (`-RecorderName x`), qui ne sont pas enregistrés.
 - **Pas d'accès à l'écran** : la fenêtre se vérifie par `build/views/*.png`, les films par `build/tools/movie-info`.
 - **Une image Syphon a sa première ligne en bas** (D7). Tout ce qui l'affiche ou l'enregistre la retourne.
 - **Syphon garde pour toujours l'entrée d'un serveur dont l'application a été tuée** (D42). Ne jamais supposer qu'un serveur listé vit ;
