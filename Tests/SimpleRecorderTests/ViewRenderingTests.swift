@@ -209,4 +209,44 @@ final class ViewRenderingTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(view.preferredFramesPerSecond, NSScreen.screens.map(\.maximumFramesPerSecond).max() ?? 60)
         XCTAssertFalse(view.isPaused)
     }
+
+    func testTheMonitorIsDrawnTenTimesASecondWhileTheDisplayIsLimited() {
+        let view = FrameView(device: recorder.device) { (nil, false) }
+        let full = view.preferredFramesPerSecond
+        view.isLimited = true
+        XCTAssertEqual(view.preferredFramesPerSecond, 10)
+        XCTAssertFalse(view.isPaused)
+        view.isLimited = false
+        XCTAssertEqual(view.preferredFramesPerSecond, full)
+        // As the window makes it
+        let limited = FrameView(device: recorder.device, isLimited: true) { (nil, false) }
+        XCTAssertEqual(limited.preferredFramesPerSecond, 10)
+    }
+
+    func testTheWindowInPerformanceModeWhileRecording() throws {
+        // As 10-sound, recording, so that the two pictures can be compared
+        try useNDISources(available: true)
+        model.tick("STUDIO (Camera 1)")
+        model.tick("STUDIO (Camera 2)")
+        model.setOutput("both")
+        model.setSound("STUDIO (Camera 2)")
+        model.setPerformance(true)
+        try XCTUnwrap(recorder.directory.source("STUDIO (Camera 2)")).deliverSound(SourceSound.silence(ofFrameCount: 960, sampleRate: 48000))
+        let cameras = ["STUDIO (Camera 1)", "STUDIO (Camera 2)"].enumerated().map { ($1, recorder.texture(640, 360, grey: UInt8(80 + $0 * 60))) }
+        func deliverToCameras(_ seconds: Double) {
+            let end = Date().addingTimeInterval(seconds)
+            while Date() < end {
+                for (title, texture) in cameras { recorder.directory.source(title)?.deliver(texture) }
+                spin(0.02)
+            }
+        }
+        deliverToCameras(0.3)
+        model.toggleRecording()
+        deliverToCameras(0.8)
+        XCTAssertTrue(model.displayIsLimited)
+        XCTAssertGreaterThan(colours(try render("12-performance")), 8)
+        model.toggleRecording()
+        let deadline = Date().addingTimeInterval(10)
+        while model.isRecording && Date() < deadline { spin(0.02) }
+    }
 }

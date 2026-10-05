@@ -102,7 +102,7 @@ struct Recorder {
             "sourcesAvailable": sources.map { ["title": $0, "kind": ndiTitles.contains($0) ? "ndi" : "syphon"] },
             "settings": ["codec": value("/codec"), "fps": value("/fps"), "bitrate": value("/bitrate"), "folder": value("/folder"), "name": value("/name"),
                          "output": value("/output"), "layout": value("/layout"), "gap": value("/gap"), "width": value("/width"), "height": value("/height"),
-                         "sound": value("/sound")],
+                         "sound": value("/sound"), "performance": (values["/performance"] as? NSNumber)?.boolValue ?? false],
             // The assembled picture as it is now, and the assembled movie of the take being recorded or of the last one
             "assembled": ["width": value("/status/assembled/width"), "height": value("/status/assembled/height"), "file": value("/status/assembled/file"),
                           "frames": value("/status/assembled/frames"), "dropped": value("/status/assembled/dropped"),
@@ -196,6 +196,12 @@ struct Recorder {
             guard let string = value as? String else { throw RecorderError.badArguments("\(key) must be a string") }
             return string
         }
+        func bool(_ key: String) throws -> Bool? {
+            guard let value = arguments[key] else { return nil }
+            // JSON's true and false: a number is not taken for one
+            guard let number = value as? NSNumber, CFGetTypeID(number) == CFBooleanGetTypeID() else { throw RecorderError.badArguments("\(key) must be true or false") }
+            return number.boolValue
+        }
         // sources replaces the sources chosen, in order; source is the first one alone
         var titles: [String]?
         if let list = arguments["sources"] {
@@ -245,6 +251,10 @@ struct Recorder {
                 let stored = value as? String
                 return sound.isEmpty ? stored == "" : stored?.range(of: sound, options: .caseInsensitive) != nil
             }))
+        }
+        // It applies at once, during a take too
+        if let performance = try bool("performance") {
+            wanted.append(("/performance", .int(performance ? 1 : 0), { ($0 as? NSNumber)?.intValue == (performance ? 1 : 0) }))
         }
         for key in ["folder", "name"] {
             if let value = try string(key) {
@@ -348,6 +358,7 @@ let settingsProperties: [String: Any] = [
     "layout": ["type": "string", "enum": ["row", "column", "grid", "focus"], "description": "How the sources are assembled, in their order. row: side by side. column: stacked. grid: a mosaic. focus: the first large, the others in a column on its right."],
     "sound": ["type": "string", "description": "The source whose sound the assembled movie takes: its title, or part of it, among the sources chosen; empty for none (the default). Only NDI sources which send sound have any (see sources[].sound in recorder_status); a source's own movie always has its own sound. Sound is 48 kHz stereo (the source's first two channels), AAC with h264 and hevc, linear PCM with prores422 and prores4444. Give it after the sources, or together with them."],
     "gap": ["type": "integer", "description": "Pixels between the sources in the assembled picture (black, or transparent with prores4444)"],
+    "performance": ["type": "boolean", "description": "Performance mode: while a recording is in progress, the picture in the app's window is shown ten times a second instead of at every frame, to leave the GPU to the movies' encoders. The movies are not affected. Off by default. Unlike the other settings it applies at once, also during a recording (through recorder_configure)."],
     "width": ["type": "integer", "description": "Width the assembled picture is fitted into. 0 (or a height of 0): the size the sources need (see assembled in recorder_status)."],
     "height": ["type": "integer", "description": "Height the assembled picture is fitted into. 0 (or a width of 0): the size the sources need."],
 ]
@@ -356,7 +367,7 @@ let tools: [[String: Any]] = [
     ["name": "recorder_status",
      "description": "The state of Simple Recorder: the sources chosen for recording, in order, with each one's kind (syphon or ndi) and what it delivers (online, size, frame rate) and its movie "
         + "(file, frames written and dropped, sound: true if the source is sending sound, which only NDI sources do, and soundWritten: seconds of sound in its movie); the sources which can be chosen (sourcesAvailable: a list of {title, kind}, kind being syphon or ndi; it was a list of titles before NDI sources came); whether NDI is usable (ndi: false when NDI's library is not installed, which only leaves NDI sources out); the settings, among them what a recording writes "
-        + "(output: separate | assembled | both), which source's sound the assembled movie takes (sound) and how the sources are assembled (layout, gap, width, height); the assembled picture's size now and "
+        + "(output: separate | assembled | both), which source's sound the assembled movie takes (sound), how the sources are assembled (layout, gap, width, height) and whether the window's picture is held back while recording (performance); the assembled picture's size now and "
         + "the assembled movie (assembled: width, height, file, frames, dropped, soundWritten: seconds of sound in it); the seconds of sound left out in all the movies because an encoder could not keep up (soundLeftOut; pictures are never delayed for sound); whether it is recording "
         + "(state: idle | recording | finishing) and for how long; the last error (error: a refused message, a recording which could not start), "
         + "and why the last recording ended if it failed (failure).",

@@ -41,6 +41,8 @@ extern NSNotificationName const RecorderControllerDidChangeNotification;
 
 // The most sources which can be recorded at once
 extern const NSUInteger RecorderMaximumPlaces;
+// How many pictures a second are shown at most while the display is limited (see performance)
+extern const double RecorderLimitedDisplayRate;
 
 /*
  One of the sources chosen for recording, and what it is doing. Places are numbered from 1, in the order chosen.
@@ -102,6 +104,13 @@ extern const NSUInteger RecorderMaximumPlaces;
 // full title is kept, even when its source is no longer chosen: the assembled movie then has no sound, which is no
 // error, and it applies again if the source is chosen again. A change applies to the next take.
 @property (nonatomic, copy) NSString *sound;
+// /performance: while a take is in progress (recording or finishing), the picture composed only to be shown is
+// composed RecorderLimitedDisplayRate times a second at most, to leave the GPU to the encoders. Idle, the display
+// follows every frame as ever. Unlike the other settings it applies at once, during a take too: it is about the
+// display, not the movies. NO by default.
+@property (nonatomic, assign) BOOL performance;
+// YES while performance is on and a take is in progress: what is shown is then held back
+@property (readonly) BOOL displayIsLimited;
 
 // The sources chosen, in order: /source/1 … /source/8 (and /source, which is /source/1). They are saved in the
 // defaults. Only these are connected to. They cannot be changed while recording.

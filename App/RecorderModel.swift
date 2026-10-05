@@ -105,6 +105,10 @@ final class RecorderModel: ObservableObject {
     @Published private(set) var ndiAvailable = false
     @Published private(set) var oscPort = 0
     @Published private(set) var oscQueryPort = 0
+    /// Whether the display is held back while recording, to leave the GPU to the movies
+    @Published private(set) var performance = false
+    /// Whether it is held back now: performance is on and a take is in progress
+    @Published private(set) var displayIsLimited = false
     /// Bytes free on the disk of the folder, nil if it cannot be told
     @Published private(set) var freeSpace: Int64?
 
@@ -192,6 +196,8 @@ final class RecorderModel: ObservableObject {
         set(\.failure, controller.recordingError)
         set(\.sound, controller.sound)
         set(\.soundLeftOut, (controller.soundLeftOut * 10).rounded() / 10)
+        set(\.performance, controller.performance)
+        set(\.displayIsLimited, controller.displayIsLimited)
 
         let chosen = controller.places.map {
             Place(title: $0.title, isOnline: $0.isOnline, width: $0.width, height: $0.height, fps: ($0.fps * 10).rounded() / 10,
@@ -262,6 +268,8 @@ final class RecorderModel: ObservableObject {
     func setGap(_ gap: Int) { controller.gap = gap }
     /// The title of the source whose sound the assembled movie takes, empty for none
     func setSound(_ title: String) { controller.sound = title }
+    /// Applies at once, during a take too
+    func setPerformance(_ on: Bool) { controller.performance = on }
     /// 0 and 0 for the size the sources need
     func setSize(width: Int, height: Int) {
         controller.width = width

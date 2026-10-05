@@ -132,6 +132,14 @@ struct InspectorView: View {
             Text(namingHint)
                 .font(.system(size: 10)).foregroundStyle(Theme.textFaint)
                 .fixedSize(horizontal: false, vertical: true)
+
+            // Applies at once, during a take too: it is about what is shown, not what is recorded
+            Theme.sectionTitle("Display").padding(.top, 10)
+            Toggle("Performance mode", isOn: Binding(get: { model.performance }, set: { model.setPerformance($0) }))
+                .font(.system(size: 11)).foregroundStyle(Theme.text)
+            Text("While recording, the picture is shown ten times a second, to leave the GPU to the movies.")
+                .font(.system(size: 10)).foregroundStyle(Theme.textFaint)
+                .fixedSize(horizontal: false, vertical: true)
             Spacer()
         }
         .controlSize(.small)

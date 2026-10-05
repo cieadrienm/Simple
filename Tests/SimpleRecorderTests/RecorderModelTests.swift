@@ -356,4 +356,34 @@ final class RecorderModelTests: XCTestCase {
         model.setSound("")
         XCTAssertFalse(model.soundIsMissing)
     }
+
+    func testPerformanceFollowsTheControllerBothWays() {
+        XCTAssertFalse(model.performance)
+        XCTAssertFalse(model.displayIsLimited)
+        model.setPerformance(true)
+        XCTAssertTrue(recorder.controller.performance)
+        XCTAssertTrue(model.performance)
+        XCTAssertFalse(model.displayIsLimited, "idle: the display is not limited")
+        // The other way: OSC
+        send("/performance", NSNumber(value: 0))
+        XCTAssertFalse(model.performance)
+        send("/performance", NSNumber(value: 1))
+        XCTAssertTrue(model.performance)
+    }
+
+    func testTheDisplayIsLimitedWhileRecordingInPerformanceMode() {
+        model.tick("A - Simple Server")
+        model.setPerformance(true)
+        model.toggleRecording()
+        XCTAssertTrue(model.isRecording)
+        XCTAssertTrue(model.displayIsLimited)
+        model.setPerformance(false)
+        XCTAssertFalse(model.displayIsLimited)
+        model.setPerformance(true)
+        model.toggleRecording()
+        let deadline = Date().addingTimeInterval(10)
+        while model.isRecording && Date() < deadline { spin(0.02) }
+        XCTAssertFalse(model.isRecording)
+        XCTAssertFalse(model.displayIsLimited)
+    }
 }

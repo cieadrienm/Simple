@@ -29,24 +29,36 @@
 
 import SwiftUI
 import MetalKit
+import RecorderKit
 
-/// Shows the latest picture it is given, scaled to fit, on black, at the display's rate.
+/// Shows the latest picture it is given, scaled to fit, on black, at the display's rate; ten times a second while
+/// the display is limited (performance mode, during a take).
 struct TextureView: NSViewRepresentable {
     let device: MTLDevice
+    /// A stored value, so that SwiftUI sees it change and updates the view
+    var isLimited = false
     /// The frame to show now, and whether its first row is the bottom of the picture. Called for each redraw.
     let frame: () -> (texture: MTLTexture?, flipped: Bool)
 
     func makeNSView(context: Context) -> FrameView {
-        FrameView(device: device, frame: frame)
+        FrameView(device: device, isLimited: isLimited, frame: frame)
     }
 
     func updateNSView(_ view: FrameView, context: Context) {
         view.frameProvider = frame
+        if view.isLimited != isLimited { view.isLimited = isLimited }
     }
 }
 
 final class FrameView: MTKView {
     var frameProvider: () -> (texture: MTLTexture?, flipped: Bool)
+    /// Drawn RecorderLimitedDisplayRate times a second (the rate at which the recorder then composes what is shown)
+    /// rather than at the display's
+    var isLimited: Bool {
+        didSet { preferredFramesPerSecond = isLimited ? Int(RecorderLimitedDisplayRate) : fullRate }
+    }
+    /// The display's own rate
+    private let fullRate: Int
     private var queue: MTLCommandQueue?
     private var pipeline: MTLRenderPipelineState?
 
@@ -69,14 +81,16 @@ final class FrameView: MTKView {
     }
     """
 
-    init(device: MTLDevice, frame: @escaping () -> (texture: MTLTexture?, flipped: Bool)) {
+    init(device: MTLDevice, isLimited: Bool = false, frame: @escaping () -> (texture: MTLTexture?, flipped: Bool)) {
         frameProvider = frame
+        // Drawn at the display's own rate, so that every picture of a source is shown: at half of it (as this was, to
+        // leave the GPU to the encoders) a sixty-frame source visibly stutters. Performance mode chooses otherwise.
+        fullRate = max(60, NSScreen.screens.map(\.maximumFramesPerSecond).max() ?? 60)
+        self.isLimited = isLimited
         super.init(frame: .zero, device: device)
         colorPixelFormat = .bgra8Unorm
         clearColor = MTLClearColorMake(0, 0, 0, 1)
-        // Drawn at the display's own rate, so that every picture of a source is shown: at half of it (as this was, to
-        // leave the GPU to the encoders) a sixty-frame source visibly stutters
-        preferredFramesPerSecond = max(60, NSScreen.screens.map(\.maximumFramesPerSecond).max() ?? 60)
+        preferredFramesPerSecond = isLimited ? Int(RecorderLimitedDisplayRate) : fullRate
         queue = device.makeCommandQueue()
         if let library = try? device.makeLibrary(source: Self.shaders, options: nil) {
             let descriptor = MTLRenderPipelineDescriptor()

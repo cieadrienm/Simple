@@ -913,6 +913,118 @@ final class RecorderControllerTests: XCTestCase {
         }
     }
 
+    // MARK: Performance mode
+
+    func testPerformanceIsOffByDefaultAndSaved() {
+        XCTAssertFalse(controller.performance)
+        XCTAssertFalse(controller.displayIsLimited)
+        send("/performance", NSNumber(value: 1))
+        XCTAssertTrue(controller.performance)
+        XCTAssertEqual(controller.error, "")
+        XCTAssertEqual(defaults.persistentDomain(forName: defaultsName)?["RecorderPerformance"] as? Bool, true)
+        let next = RecorderController(device: device, directory: directory, defaults: defaults)
+        XCTAssertTrue(next.performance)
+        send("/performance", NSNumber(value: 0))
+        XCTAssertFalse(controller.performance)
+        XCTAssertFalse(RecorderController(device: device, directory: directory, defaults: defaults).performance)
+    }
+
+    func testOSCSetsPerformanceWithANumber() {
+        // Any number but 0 turns it on, as /record does
+        send("/performance", NSNumber(value: Float(2)))
+        XCTAssertTrue(controller.performance)
+        send("/performance", "0")
+        XCTAssertFalse(controller.performance)
+        send("/performance", "on")
+        XCTAssertFalse(controller.performance)
+        XCTAssertTrue(controller.error.contains("/performance"), controller.error)
+        send("/performance")
+        XCTAssertTrue(controller.error.contains("/performance"), controller.error)
+    }
+
+    func testTheDisplayIsLimitedOnlyDuringATakeInPerformanceMode() {
+        tick([a])
+        send("/performance", NSNumber(value: 1))
+        XCTAssertFalse(controller.displayIsLimited, "idle: the display is smooth")
+        XCTAssertTrue(controller.start())
+        XCTAssertTrue(controller.displayIsLimited)
+        send("/performance", NSNumber(value: 0))
+        XCTAssertFalse(controller.displayIsLimited, "turned off during the take, it applies at once")
+        send("/performance", NSNumber(value: 1))
+        XCTAssertTrue(controller.displayIsLimited)
+        deliverFrames(for: 0.2)
+        controller.stop(completionHandler: nil)
+        XCTAssertEqual(controller.state, "finishing")
+        XCTAssertTrue(controller.displayIsLimited, "finishing is still the take")
+        waitForState("idle")
+        XCTAssertFalse(controller.displayIsLimited)
+    }
+
+    func testIdleInPerformanceModeTheMonitorShowsEveryFrame() {
+        tick([a, b])
+        send("/performance", NSNumber(value: 1))
+        let pictures = monitorPictures(for: 2, from: [(a, makeTexture(640, 360)), (b, makeTexture(320, 360))])
+        XCTAssertGreaterThan(pictures, 105, "the monitor showed \(pictures) pictures for about 120 frames")
+    }
+
+    func testRecordingInPerformanceModeTheMonitorIsLimitedAndTheMoviesAreWhole() {
+        tick([a, b])
+        send("/performance", NSNumber(value: 1))
+        send("/output", "separate")
+        XCTAssertTrue(controller.start())
+        let pictures = monitorPictures(for: 2, from: [(a, makeTexture(640, 360)), (b, makeTexture(320, 360))])
+        stopAndWait()
+        // Ten a second at most: about twenty in two seconds
+        XCTAssertGreaterThanOrEqual(pictures, 15, "the monitor showed \(pictures) pictures")
+        XCTAssertLessThanOrEqual(pictures, 30, "the monitor showed \(pictures) pictures")
+        // The movies have every frame
+        for place in controller.places {
+            XCTAssertGreaterThan(place.frames, 105, "\(place.title): \(place.frames) frames written")
+            XCTAssertEqual(place.dropped, 0, place.title)
+        }
+    }
+
+    func testRecordingBothInPerformanceModeTheAssembledMovieHasEveryFrame() {
+        tick([a, b])
+        send("/performance", NSNumber(value: 1))
+        send("/output", "both")
+        send("/fps", NSNumber(value: 60))
+        XCTAssertTrue(controller.start())
+        _ = monitorPictures(for: 2, from: [(a, makeTexture(640, 360)), (b, makeTexture(320, 360))])
+        stopAndWait()
+        XCTAssertGreaterThan(controller.assembledFrames, 105, "\(controller.assembledFrames) frames in the assembled movie")
+        XCTAssertEqual(controller.assembledDropped, 0)
+    }
+
+    func testTurningPerformanceOffDuringATakeAndTheTakesEndMakeTheDisplaySmoothAgain() {
+        tick([a, b])
+        send("/performance", NSNumber(value: 1))
+        XCTAssertTrue(controller.start())
+        let limited = monitorPictures(for: 1, from: [(a, makeTexture(640, 360)), (b, makeTexture(320, 360))])
+        XCTAssertLessThanOrEqual(limited, 15, "limited: \(limited) pictures in a second")
+        send("/performance", NSNumber(value: 0))
+        let off = monitorPictures(for: 2, from: [(a, makeTexture(640, 360)), (b, makeTexture(320, 360))])
+        XCTAssertGreaterThan(off, 105, "turned off during the take: \(off) pictures for about 120 frames")
+        send("/performance", NSNumber(value: 1))
+        stopAndWait()
+        let after = monitorPictures(for: 2, from: [(a, makeTexture(640, 360)), (b, makeTexture(320, 360))])
+        XCTAssertGreaterThan(after, 105, "after the take: \(after) pictures for about 120 frames")
+    }
+
+    func testOSCQueryDescribesPerformance() throws {
+        XCTAssertTrue(controller.startNetwork(withOSCPort: 19460, queryPort: 19461, name: "Recorder Test"))
+        send("/performance", NSNumber(value: 1))
+        let performance = get("/performance")
+        XCTAssertEqual(performance["TYPE"] as? String, "i")
+        XCTAssertEqual(performance["ACCESS"] as? Int, 3)
+        // An OSC int, not a JSON true or false
+        let value = try XCTUnwrap((performance["VALUE"] as? [Any])?.first as? NSNumber)
+        XCTAssertFalse(CFGetTypeID(value) == CFBooleanGetTypeID(), "performance is served as a boolean")
+        XCTAssertEqual(value.intValue, 1)
+        XCTAssertEqual((performance["RANGE"] as? [[String: Int]])?.first?["MAX"], 1)
+        XCTAssertFalse((performance["DESCRIPTION"] as? String ?? "").isEmpty)
+    }
+
     func testAPictureIsComposedForTheMonitorWhenIdle() throws {
         tick([a, b])
         deliverFrames(for: 0.2, from: [(a, makeTexture(640, 360)), (b, makeTexture(320, 360))])
@@ -1738,7 +1850,7 @@ final class RecorderControllerTests: XCTestCase {
         XCTAssertEqual(info["OSC_PORT"] as? Int, 19430)
 
         let root = contents(get("/"))
-        XCTAssertEqual(Set(root.keys), ["source", "record", "codec", "width", "height", "fps", "bitrate", "folder", "name", "output", "layout", "gap", "sound", "status"])
+        XCTAssertEqual(Set(root.keys), ["source", "record", "codec", "width", "height", "fps", "bitrate", "folder", "name", "output", "layout", "gap", "sound", "performance", "status"])
 
         let codec = try XCTUnwrap(root["codec"] as? [String: Any])
         XCTAssertEqual(codec["VALUE"] as? [String], ["hevc"])

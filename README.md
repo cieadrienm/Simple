@@ -9,8 +9,8 @@ The window
 ----------
 
 - **Sources**, on the left: the Syphon servers which are running, and the NDI sources found on the network, tagged "NDI". Tick one to record it; drag the ticked ones to order them. A source which goes away keeps its place, dimmed, and takes it again when it is back — also when its application was killed and relaunched. Up to eight. Only ticked sources are connected to. A note sign marks the sources which have sound.
-- **The picture**, in the middle: the sources assembled, live, as they are (or would be) recorded, each with its title over its part — the titles are not recorded. Under it, the four layouts and the picture's size. With *Separate* it is still shown: it is how the sources are watched.
-- **Settings**, on the right: the codec, frame rate and bitrate of the movies; the size of the assembled picture and the gap between its sources; the folder and the name; and, for the assembled movie, which source's sound it takes (*Sound*).
+- **The picture**, in the middle: the sources assembled, live, as they are (or would be) recorded, each with its title over its part — the titles are not recorded. Under it, the four layouts and the picture's size. With *Separate* it is still shown: it is how the sources are watched. It follows every frame of its source, at the display's rate; in performance mode, while recording, it is shown ten times a second and "Display limited" says so.
+- **Settings**, on the right: the codec, frame rate and bitrate of the movies; the size of the assembled picture and the gap between its sources; the folder and the name; for the assembled movie, which source's sound it takes (*Sound*); and *Performance mode* (under "Display"): while recording, the picture is shown ten times a second instead of at every frame, to leave the GPU to the encoders on a loaded machine. It applies at once, also during a recording, and changes nothing in the movies; when not recording the picture is as smooth as ever.
 - **The take**, on top: the record button (⌘R), which stays pressed and shows a stop square while recording, whatever started the recording; the time; frames written and dropped; and what a recording writes: *Separate*, *Assembled* or *Both*.
 - **The state**, at the bottom: the OSC and OSCQuery ports, whether NDI is available ("NDI on" or "NDI off"), the space left, how many movies a recording writes, and why the last recording ended if it failed.
 
@@ -82,6 +82,7 @@ Simple Recorder listens for OSC on UDP port **9230** and describes its parameter
 | `/gap` | int | read, write | Pixels between the sources in the assembled picture, up to 1000 |
 | `/width`, `/height` | int | read, write | The size the assembled picture is fitted into; 0 for the size the sources need |
 | `/sound` | string | read, write | The source whose sound the assembled movie takes: its title, or part of it, among the sources chosen; empty for none (the default). OSCQuery lists the titles as its `RANGE`. |
+| `/performance` | int | read, write | 1: while recording, the picture shown in the window is composed and drawn ten times a second, to leave the GPU to the movies; 0 (the default): every frame. Any number but 0 counts as 1. It applies at once. |
 | `/status/state` | string | read | `idle`, `recording`, or `finishing` while the movies are completed |
 | `/status/elapsed` | float | read | Seconds recorded |
 | `/status/dropped` | int | read | Frames lost in all the movies because an encoder could not keep up |
@@ -101,7 +102,7 @@ Simple Recorder listens for OSC on UDP port **9230** and describes its parameter
 | `/status/assembled/file`, `/frames`, `/dropped` | string, int, int | read | The assembled movie |
 | `/status/file`, `/status/frames` | string, int | read | The assembled movie or, if there is none, the first source's |
 
-A source's own movie is always the size of the source: `/width` and `/height` concern the assembled picture only. `/output`, `/layout`, `/gap`, `/width`, `/height` and `/sound` can be set while recording; they apply to the next recording.
+A source's own movie is always the size of the source: `/width` and `/height` concern the assembled picture only. `/output`, `/layout`, `/gap`, `/width`, `/height` and `/sound` can be set while recording; they apply to the next recording. `/performance` can be set while recording too, and applies at once.
 
 OSC has no passwords: any machine which can reach Simple Recorder's port can start and stop recordings and change where they are written. Use it on a network you trust.
 
@@ -119,8 +120,8 @@ MCP
 
 `simple-recorder-mcp` is inside the app (`Contents/MacOS`). It is a stdio MCP server which reads the recorder through OSCQuery and writes with OSC, so the app must be running. `.mcp.json` declares it for Claude Code, from `build/Simple Recorder.app`.
 
-- `recorder_status`: the sources chosen, each with its `kind` (`syphon` or `ndi`) and what it delivers and writes (`sound`: whether it sends sound; `soundWritten`: seconds of sound in its movie), `ndi` (whether NDI's library is loaded), the sources available as a list of `{title, kind}` (a list of plain titles before NDI: its shape changed), settings (`sound`: the source whose sound the assembled movie takes), the assembled picture and its movie (`assembled`, with `soundWritten`, seconds of sound in it), `soundLeftOut`, state, errors
-- `recorder_configure {sources, source, codec, fps, bitrate, folder, name, output, layout, gap, width, height, sound}`: changes what is given; `sources` is a list of titles, in order, of Syphon servers or NDI sources; `sound` is the title (or part of it) of the source among them whose sound the assembled movie takes, or empty for none
+- `recorder_status`: the sources chosen, each with its `kind` (`syphon` or `ndi`) and what it delivers and writes (`sound`: whether it sends sound; `soundWritten`: seconds of sound in its movie), `ndi` (whether NDI's library is loaded), the sources available as a list of `{title, kind}` (a list of plain titles before NDI: its shape changed), settings (`sound`: the source whose sound the assembled movie takes; `performance`: whether the window's picture is held back while recording), the assembled picture and its movie (`assembled`, with `soundWritten`, seconds of sound in it), `soundLeftOut`, state, errors
+- `recorder_configure {sources, source, codec, fps, bitrate, folder, name, output, layout, gap, width, height, sound, performance}`: changes what is given; `sources` is a list of titles, in order, of Syphon servers or NDI sources; `sound` is the title (or part of it) of the source among them whose sound the assembled movie takes, or empty for none; `performance` (true or false) holds the window's picture back to ten a second while recording, and applies at once
 - `recorder_start`: accepts the same; returns once recording, or fails with the reason
 - `recorder_stop`: returns once the movies are finished, with their paths
 

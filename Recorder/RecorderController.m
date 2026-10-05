@@ -38,6 +38,8 @@
 
 NSNotificationName const RecorderControllerDidChangeNotification = @"RecorderControllerDidChangeNotification";
 const NSUInteger RecorderMaximumPlaces = 8;
+// Ten pictures a second say what is happening, and cost the GPU a sixth of what a sixty-frame source would
+const double RecorderLimitedDisplayRate = 10.0;
 
 static NSString * const kStateIdle = @"idle";
 static NSString * const kStateRecording = @"recording";
@@ -53,6 +55,9 @@ static const NSInteger kMaximumGap = 1000;
 // the pace: what is shown is as smooth as what arrives. Only a source faster than any display is held back to this.
 // (It was thirty times a second at most, to spare the GPU: the picture shown then stuttered beside its source.)
 static const NSTimeInterval kMonitorInterval = 1.0 / 250.0;
+// In performance mode, while a take is in progress, it is composed this often at most (D75): the GPU is left to the
+// encoders. A picture composed for the assembled movie is still shown, as it costs nothing more.
+static const NSTimeInterval kLimitedMonitorInterval = 1.0 / RecorderLimitedDisplayRate;
 // and no larger than this on a side: it is to be looked at in a window, whatever the size it is recorded at
 static const CGFloat kMonitorLargestSide = 4096.0;
 // How often what changes by itself is refreshed
@@ -395,6 +400,8 @@ static NSString *StringFrom(NSArray *arguments)
     RecorderPlace *_clockPlace;
     NSTimeInterval _lastComposeTime;
     id<MTLTexture> _assembledFrame;
+    // performance is on and a take is in progress: the picture composed only to be shown is held back
+    BOOL _displayLimited;
 }
 
 + (BOOL)automaticallyNotifiesObserversForKey:(NSString *)key
@@ -411,6 +418,11 @@ static NSString *StringFrom(NSArray *arguments)
 + (NSSet<NSString *> *)keyPathsForValuesAffectingRecording
 {
     return [NSSet setWithObject:@"state"];
+}
+
++ (NSSet<NSString *> *)keyPathsForValuesAffectingDisplayIsLimited
+{
+    return [NSSet setWithObjects:@"state", @"performance", nil];
 }
 
 - (instancetype)initWithDevice:(id<MTLDevice>)device
@@ -455,6 +467,7 @@ static NSString *StringFrom(NSArray *arguments)
         _layout = [Layout getKind:&kind forName:layoutName] ? [layoutName copy] : [Layout nameForKind:LayoutKindRow];
         _gap = MIN(MAX([defaults integerForKey:@"RecorderGap"], 0), kMaximumGap);
         _sound = [[defaults stringForKey:@"RecorderSound"] ?: @"" copy];
+        _performance = [defaults boolForKey:@"RecorderPerformance"];
 
         _composeLock = OS_UNFAIR_LOCK_INIT;
         _composePlaces = @[];
@@ -609,6 +622,28 @@ static NSString *StringFrom(NSArray *arguments)
     _sound = [title copy];
     [_defaults setObject:_sound forKey:@"RecorderSound"];
     [self changed];
+}
+
+- (void)setPerformance:(BOOL)performance
+{
+    _performance = performance;
+    [_defaults setBool:_performance forKey:@"RecorderPerformance"];
+    [self displayLimitChanged];
+    [self changed];
+}
+
+- (BOOL)displayIsLimited
+{
+    return self.performance && self.isRecording;
+}
+
+// Main thread: the performance mode or the state has changed. The sources' threads read the limit when a frame arrives.
+- (void)displayLimitChanged
+{
+    BOOL limited = self.displayIsLimited;
+    os_unfair_lock_lock(&_composeLock);
+    _displayLimited = limited;
+    os_unfair_lock_unlock(&_composeLock);
 }
 
 - (void)setNdiAvailable:(BOOL)ndiAvailable
@@ -943,7 +978,7 @@ static Layout *MonitorLayout(Layout *layout, LayoutKind kind, NSArray *sizes, NS
     NSArray<RecorderPlace *> *places = _composePlaces;
     Layout *takeLayout = _takeLayout;
     BOOL transparent = _takeTransparent;
-    BOOL monitorIsDue = time - _lastComposeTime >= kMonitorInterval;
+    BOOL monitorIsDue = time - _lastComposeTime >= (_displayLimited ? kLimitedMonitorInterval : kMonitorInterval);
     os_unfair_lock_unlock(&_composeLock);
     if (!setsThePace)
     {
@@ -1356,6 +1391,7 @@ static Layout *MonitorLayout(Layout *layout, LayoutKind kind, NSArray *sizes, NS
     _activity = [[NSProcessInfo processInfo] beginActivityWithOptions:NSActivityUserInitiated | NSActivityLatencyCritical
                                                                reason:@"Recording"];
     self.state = kStateRecording;
+    [self displayLimitChanged];
     [self refresh];
     return YES;
 }
@@ -1390,6 +1426,7 @@ static Layout *MonitorLayout(Layout *layout, LayoutKind kind, NSArray *sizes, NS
     _takeMonitorLayout = nil;
     os_unfair_lock_unlock(&_composeLock);
     self.state = kStateFinishing;
+    [self displayLimitChanged];
     [self changed];
     __weak RecorderController *weakSelf = self;
     [_take finishAtTime:now completionHandler:^(NSError *error) {
@@ -1461,6 +1498,7 @@ static Layout *MonitorLayout(Layout *layout, LayoutKind kind, NSArray *sizes, NS
         _activity = nil;
     }
     self.state = kStateIdle;
+    [self displayLimitChanged];
     [self refresh];
 
     NSArray<void (^)(void)> *handlers = [_stopHandlers copy];
@@ -1694,6 +1732,22 @@ static Layout *MonitorLayout(Layout *layout, LayoutKind kind, NSArray *sizes, NS
         return nil;
     };
     [parameters addObject:sound];
+
+    RecorderParameter *performance = [self parameter:@"/performance" type:@"i" summary:@"1 holds the display back while recording: the picture is shown ten times a second, to leave the GPU to the movies. It applies at once. 0 (the default) shows every frame."];
+    performance.range = ^{ return @[@{@"MIN": @0, @"MAX": @1}]; };
+    // An OSC int, not a JSON true or false
+    performance.get = ^{ return @[@(weakSelf.performance ? 1 : 0)]; };
+    performance.set = ^NSString *(NSArray *arguments) {
+        NSNumber *number = NumberFrom(arguments);
+        if (number == nil)
+        {
+            return @"expects 1 or 0";
+        }
+        // Any number but 0 turns it on, as for /record
+        weakSelf.performance = number.doubleValue != 0.0;
+        return nil;
+    };
+    [parameters addObject:performance];
 
     RecorderParameter *assembledWidth = [self parameter:@"/status/assembled/width" type:@"i" summary:@"Width of the assembled picture as it is now, or of the take being recorded"];
     assembledWidth.get = ^{ return @[@(weakSelf.places.count > 0 ? (NSInteger)weakSelf.assembledLayout.size.width : 0)]; };

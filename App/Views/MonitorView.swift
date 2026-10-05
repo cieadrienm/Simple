@@ -51,6 +51,12 @@ struct MonitorView: View {
                 HStack(spacing: 10) {
                     LayoutPicker(layout: model.layout, isEnabled: !model.isRecording) { model.setLayout($0) }
                     Spacer()
+                    if model.displayIsLimited {
+                        // So that a choppy picture during a take is explained
+                        Text("Display limited")
+                            .font(.system(size: 11)).foregroundStyle(Theme.textDim)
+                            .help("Performance mode is on: the picture is shown ten times a second while recording")
+                    }
                     if model.pictureIsTooLarge {
                         Label("Too large to be recorded", systemImage: "exclamationmark.triangle.fill")
                             .font(.system(size: 11)).foregroundStyle(Theme.accent)
@@ -73,7 +79,7 @@ struct MonitorView: View {
         let controller = model.controller
         return ZStack(alignment: .topLeading) {
             // The picture is asked for at each redraw: it changes sixty times a second
-            TextureView(device: controller.device) { (controller.assembledFrame, false) }
+            TextureView(device: controller.device, isLimited: model.displayIsLimited) { (controller.assembledFrame, false) }
             ForEach(Array(zip(model.places.indices, model.titleRects)), id: \.0) { index, rect in
                 title(model.places[index])
                     .frame(maxWidth: max(rect.width * fitted.width - 8, 20), alignment: .leading)
