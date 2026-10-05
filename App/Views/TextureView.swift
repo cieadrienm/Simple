@@ -30,7 +30,7 @@
 import SwiftUI
 import MetalKit
 
-/// Shows the latest frame of a source, scaled to fit, on black.
+/// Shows the latest picture it is given, scaled to fit, on black, at the display's rate.
 struct TextureView: NSViewRepresentable {
     let device: MTLDevice
     /// The frame to show now, and whether its first row is the bottom of the picture. Called for each redraw.
@@ -74,8 +74,9 @@ final class FrameView: MTKView {
         super.init(frame: .zero, device: device)
         colorPixelFormat = .bgra8Unorm
         clearColor = MTLClearColorMake(0, 0, 0, 1)
-        // A monitor: half the rate of a display is plenty, and leaves the GPU to the encoders
-        preferredFramesPerSecond = 30
+        // Drawn at the display's own rate, so that every picture of a source is shown: at half of it (as this was, to
+        // leave the GPU to the encoders) a sixty-frame source visibly stutters
+        preferredFramesPerSecond = max(60, NSScreen.screens.map(\.maximumFramesPerSecond).max() ?? 60)
         queue = device.makeCommandQueue()
         if let library = try? device.makeLibrary(source: Self.shaders, options: nil) {
             let descriptor = MTLRenderPipelineDescriptor()

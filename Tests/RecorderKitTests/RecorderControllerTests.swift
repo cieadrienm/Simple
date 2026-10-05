@@ -1,6 +1,7 @@
 import XCTest
 import AVFoundation
 import Metal
+import QuartzCore
 import RecorderKit
 
 /// A source which delivers the frames the test gives it.
@@ -857,6 +858,59 @@ final class RecorderControllerTests: XCTestCase {
         send("/width", NSNumber(value: 0))
         tick([depth])
         XCTAssertEqual(controller.assembledLayout.size, size(1920 + 960 + 1920, 1080))
+    }
+
+    /// How many different pictures the monitor is given in a stretch, while sources deliver at sixty frames a second.
+    private func monitorPictures(for seconds: Double, from sources: [(String, MTLTexture)]) -> Int {
+        let live = sources.compactMap { title, texture in directory.source(title).map { ($0, texture) } }
+        let done = expectation(description: "frames delivered")
+        DispatchQueue.global(qos: .userInteractive).async {
+            // On the clock, as a source is: sleeping a fixed time between frames would drift under load
+            let start = CACurrentMediaTime()
+            var frame = 0
+            while CACurrentMediaTime() - start < seconds {
+                for (source, texture) in live { source.deliver(texture) }
+                frame += 1
+                let next = start + Double(frame) / 60
+                let wait = next - CACurrentMediaTime()
+                if wait > 0 { usleep(useconds_t(wait * 1_000_000)) }
+            }
+            done.fulfill()
+        }
+        // Watched as a display would, but faster, so that no picture is missed
+        var pictures = 0
+        var last: ObjectIdentifier?
+        let end = Date().addingTimeInterval(seconds)
+        while Date() < end {
+            if let picture = controller.assembledFrame, ObjectIdentifier(picture) != last {
+                last = ObjectIdentifier(picture)
+                pictures += 1
+            }
+            usleep(500)
+        }
+        wait(for: [done], timeout: seconds + 5)
+        return pictures
+    }
+
+    func testTheMonitorShowsEveryFrameOfASixtyHertzSource() {
+        tick([a, b])
+        let pictures = monitorPictures(for: 2, from: [(a, makeTexture(640, 360)), (b, makeTexture(320, 360))])
+        // 120 frames arrive from the source which sets the pace: the picture shown must follow them all, not half
+        XCTAssertGreaterThan(pictures, 105, "the monitor showed \(pictures) pictures for about 120 frames")
+        XCTAssertLessThan(pictures, 130)
+    }
+
+    func testTheMonitorShowsEveryFrameWhileRecordingToo() {
+        tick([a, b])
+        for output in ["separate", "both"] {
+            send("/output", output)
+            send("/fps", NSNumber(value: 30))
+            XCTAssertTrue(controller.start())
+            // The movies keep thirty frames a second; what is shown still follows the source
+            let pictures = monitorPictures(for: 2, from: [(a, makeTexture(640, 360)), (b, makeTexture(320, 360))])
+            stopAndWait()
+            XCTAssertGreaterThan(pictures, 105, "\(output): the monitor showed \(pictures) pictures for about 120 frames")
+        }
     }
 
     func testAPictureIsComposedForTheMonitorWhenIdle() throws {

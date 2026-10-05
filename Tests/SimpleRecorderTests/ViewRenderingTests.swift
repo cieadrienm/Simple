@@ -201,4 +201,12 @@ final class ViewRenderingTests: XCTestCase {
     private func send(_ address: String, _ arguments: Any...) {
         recorder.controller.handle(OSCMessage(address: address, arguments: arguments))
     }
+
+    func testTheMonitorIsDrawnAtTheDisplaysRate() {
+        // What is shown must be as smooth as its source: sixty pictures a second at least, more on a faster display
+        let view = FrameView(device: recorder.device) { (nil, false) }
+        XCTAssertGreaterThanOrEqual(view.preferredFramesPerSecond, 60)
+        XCTAssertGreaterThanOrEqual(view.preferredFramesPerSecond, NSScreen.screens.map(\.maximumFramesPerSecond).max() ?? 60)
+        XCTAssertFalse(view.isPaused)
+    }
 }

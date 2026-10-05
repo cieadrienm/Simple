@@ -49,8 +49,10 @@ static const NSInteger kMaximumDimension = 16384;
 static const double kMaximumFramesPerSecond = 240.0;
 static const double kMaximumMegabitsPerSecond = 1000.0;
 static const NSInteger kMaximumGap = 1000;
-// When no take needs it, the assembled picture is composed this often at most, to be shown
-static const NSTimeInterval kMonitorInterval = 1.0 / 30.0;
+// When no take needs it, the assembled picture is still composed to be shown, at every frame of the source which sets
+// the pace: what is shown is as smooth as what arrives. Only a source faster than any display is held back to this.
+// (It was thirty times a second at most, to spare the GPU: the picture shown then stuttered beside its source.)
+static const NSTimeInterval kMonitorInterval = 1.0 / 250.0;
 // and no larger than this on a side: it is to be looked at in a window, whatever the size it is recorded at
 static const CGFloat kMonitorLargestSide = 4096.0;
 // How often what changes by itself is refreshed
