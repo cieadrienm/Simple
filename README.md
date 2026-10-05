@@ -142,6 +142,8 @@ Versions
 
 The version is `VERSION` at the top of `Scripts/bundle.sh`, and only there; the script stamps it, with a build number which counts the commits, into the app's `Info.plist` (`Resources/Info.plist` keeps the placeholders `@VERSION@` and `@BUILD@`). The About panel, the window's bottom bar, `/status/version` and the MCP's `recorder_status` show it; outside the app (`swift run`, the tests) it is `dev`. What changed is in `CHANGELOG.md`, and each release is tagged `vX.Y.Z` in git.
 
+The app's icon is drawn by `swift Scripts/make-icon.swift`, which writes `Resources/icon.icns`.
+
 Simple Recorder is a SwiftPM package: the window in `App/` (SwiftUI), the recording core in `Recorder/` (Objective-C, independent of Syphon), the MCP server in `MCP/`. Syphon's framework is a submodule, given to SwiftPM as an xcframework which `Scripts/syphon.sh` builds — run it once before `swift build` (`Scripts/bundle.sh` does). Simple Server is built from `Simple.xcworkspace`.
 
 Tests
