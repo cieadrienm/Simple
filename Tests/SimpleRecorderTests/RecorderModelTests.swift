@@ -357,6 +357,20 @@ final class RecorderModelTests: XCTestCase {
         XCTAssertFalse(model.soundIsMissing)
     }
 
+    func testComputerSoundIsOfferedAndNeverMissing() {
+        XCTAssertEqual(RecorderModel.computerSound, "computer")
+        model.setSound(RecorderModel.computerSound)
+        XCTAssertEqual(recorder.controller.sound, "computer")
+        XCTAssertEqual(model.sound, "computer")
+        XCTAssertFalse(model.soundIsMissing)
+        XCTAssertEqual(model.soundChoices, [], "Computer has its own entry in the picker, not a place's")
+        send("/sound", "")
+        XCTAssertEqual(model.sound, "")
+        send("/sound", "Computer")
+        XCTAssertEqual(model.sound, "computer")
+        XCTAssertFalse(model.soundIsMissing)
+    }
+
     func testPerformanceFollowsTheControllerBothWays() {
         XCTAssertFalse(model.performance)
         XCTAssertFalse(model.displayIsLimited)

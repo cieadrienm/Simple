@@ -45,3 +45,4 @@
 #import "CompositeDirectory.h"
 #import "SourceSound.h"
 #import "SoundTimeline.h"
+#import "ComputerSound.h"

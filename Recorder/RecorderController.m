@@ -40,6 +40,7 @@ NSNotificationName const RecorderControllerDidChangeNotification = @"RecorderCon
 const NSUInteger RecorderMaximumPlaces = 8;
 // Ten pictures a second say what is happening, and cost the GPU a sixth of what a sixty-frame source would
 const double RecorderLimitedDisplayRate = 10.0;
+NSString * const RecorderComputerSound = @"computer";
 
 static NSString * const kStateIdle = @"idle";
 static NSString * const kStateRecording = @"recording";
@@ -368,6 +369,7 @@ static NSString *StringFrom(NSArray *arguments)
 @implementation RecorderController {
     id<MTLDevice> _device;
     id<SourceDirectory> _directory;
+    id<SoundSource> _computerSound;
     NSUserDefaults *_defaults;
     Take *_take;
     NSArray<RecorderParameter *> *_parameters;
@@ -429,11 +431,20 @@ static NSString *StringFrom(NSArray *arguments)
                      directory:(id<SourceDirectory>)directory
                       defaults:(NSUserDefaults *)defaults
 {
+    return [self initWithDevice:device directory:directory computerSound:[[ComputerSound alloc] init] defaults:defaults];
+}
+
+- (instancetype)initWithDevice:(id<MTLDevice>)device
+                     directory:(id<SourceDirectory>)directory
+                 computerSound:(id<SoundSource>)computerSound
+                      defaults:(NSUserDefaults *)defaults
+{
     self = [super init];
     if (self)
     {
         _device = device;
         _directory = directory;
+        _computerSound = computerSound;
         _defaults = defaults;
         _state = kStateIdle;
         _error = @"";
@@ -476,6 +487,10 @@ static NSString *StringFrom(NSArray *arguments)
         _monitorCompositor = [[Compositor alloc] initWithCommandQueue:queue];
 
         _take = [[Take alloc] initWithDevice:device];
+        Take *take = _take;
+        _computerSound.soundHandler = ^(SourceSound *sound) {
+            [take appendComputerSound:sound atTime:CACurrentMediaTime()];
+        };
         __weak RecorderController *weakSelf = self;
         _take.movieFailureHandler = ^(NSUInteger index, NSError *error) {
             [weakSelf movieAtIndex:index failedWithError:error];
@@ -512,6 +527,7 @@ static NSString *StringFrom(NSArray *arguments)
 - (void)dealloc
 {
     [_refreshTimer invalidate];
+    [_computerSound stop];
     for (RecorderPlace *place in _places)
     {
         [place.source stop];
@@ -613,13 +629,13 @@ static NSString *StringFrom(NSArray *arguments)
 
 - (void)setSound:(NSString *)sound
 {
-    // A title which is not a place's is ignored: OSC says why
-    NSString *title = sound.length == 0 ? @"" : [self placeTitleMatching:sound];
-    if (title == nil)
+    // A title which is neither a place's nor computer is ignored: OSC says why
+    NSString *choice = [self soundChoiceMatching:sound ?: @""];
+    if (choice == nil)
     {
         return;
     }
-    _sound = [title copy];
+    _sound = [choice copy];
     [_defaults setObject:_sound forKey:@"RecorderSound"];
     [self changed];
 }
@@ -1182,6 +1198,20 @@ static Layout *MonitorLayout(Layout *layout, LayoutKind kind, NSArray *sizes, NS
     return index == NSNotFound ? nil : titles[index];
 }
 
+// The value of sound meant: empty, "computer", or the title of the place which matches it. nil if none does.
+- (NSString *)soundChoiceMatching:(NSString *)sound
+{
+    if (sound.length == 0)
+    {
+        return @"";
+    }
+    if ([sound caseInsensitiveCompare:RecorderComputerSound] == NSOrderedSame)
+    {
+        return RecorderComputerSound;
+    }
+    return [self placeTitleMatching:sound];
+}
+
 - (NSUInteger)indexOfPlaceWithTitle:(NSString *)title
 {
     return [self.places indexOfObjectPassingTest:^BOOL(RecorderPlace *place, NSUInteger idx, BOOL *stop) {
@@ -1356,17 +1386,22 @@ static Layout *MonitorLayout(Layout *layout, LayoutKind kind, NSArray *sizes, NS
         name = [NSString stringWithFormat:@"Simple Recorder %@", [formatter stringFromDate:[NSDate date]]];
     }
 
-    // The sources whose movies have a sound track: all but those known to be Syphon's, which has no sound. A source
-    // which is away or silent now may bring sound later, and a movie whose track receives nothing has none in the end.
+    BOOL computerSound = [self.sound isEqualToString:RecorderComputerSound];
+    // The sources whose movies have a sound track of their own: all but those known to be Syphon's, which has no sound
+    // (or, in Separate mode with computer sound, only those known to be NDI's, as the others take the Mac's sound).
+    // A source which is away or silent now may bring sound later, and a movie whose track receives nothing has none in the end.
     NSMutableIndexSet *soundSources = [NSMutableIndexSet indexSet];
     [places enumerateObjectsUsingBlock:^(RecorderPlace *place, NSUInteger index, BOOL *stop) {
-        if (!(place.kindKnown && place.kind == FrameSourceKindSyphon))
+        BOOL takesOwnSound = (computerSound && output == TakeOutputSeparate)
+            ? (place.kindKnown && place.kind == FrameSourceKindNDI)
+            : !(place.kindKnown && place.kind == FrameSourceKindSyphon);
+        if (takesOwnSound)
         {
             [soundSources addIndex:index];
         }
     }];
     // The assembled movie takes the sound chosen if its source is one of them; otherwise it has none, which is no error
-    NSUInteger assembledSoundIndex = self.sound.length > 0 ? [self indexOfPlaceWithTitle:self.sound] : NSNotFound;
+    NSUInteger assembledSoundIndex = (!computerSound && self.sound.length > 0) ? [self indexOfPlaceWithTitle:self.sound] : NSNotFound;
     if (![soundSources containsIndex:assembledSoundIndex])
     {
         assembledSoundIndex = NSNotFound;
@@ -1380,6 +1415,7 @@ static Layout *MonitorLayout(Layout *layout, LayoutKind kind, NSArray *sizes, NS
                         assembledSize:layout ? layout.size : NSZeroSize
                          soundSources:soundSources
                   assembledSoundIndex:assembledSoundIndex
+                        computerSound:computerSound
                                  name:name
                                folder:[NSURL fileURLWithPath:self.folder isDirectory:YES]
                              settings:settings
@@ -1387,6 +1423,10 @@ static Layout *MonitorLayout(Layout *layout, LayoutKind kind, NSArray *sizes, NS
                                 error:&error])
     {
         return [self failWithError:error.localizedDescription ?: @"The recording could not start"];
+    }
+    if (computerSound)
+    {
+        [_computerSound start];
     }
 
     // Assembled alone, the places have no movie
@@ -1435,6 +1475,7 @@ static Layout *MonitorLayout(Layout *layout, LayoutKind kind, NSArray *sizes, NS
 
     NSTimeInterval now = CACurrentMediaTime();
     _lastElapsed = now - _startTime;
+    [_computerSound stop];
     for (RecorderPlace *place in self.places)
     {
         [place setTakeIndex:NSNotFound hasMovie:NO];
@@ -1730,21 +1771,21 @@ static Layout *MonitorLayout(Layout *layout, LayoutKind kind, NSArray *sizes, NS
     };
     [parameters addObject:layout];
 
-    RecorderParameter *sound = [self parameter:@"/sound" type:@"s" summary:@"The source whose sound the assembled movie takes: its title, or part of it. It must be one of the sources chosen. Empty for none."];
+    RecorderParameter *sound = [self parameter:@"/sound" type:@"s" summary:@"What sound is recorded: the title of one of the sources chosen (or part of it) for the assembled movie, computer for the sound played on the Mac (in the assembled movie, or in each Syphon movie when output is separate), or empty for none."];
     sound.range = ^{
         NSArray<NSString *> *titles = [weakSelf.places valueForKey:@"title"] ?: @[];
-        return @[@{@"VALS": [titles arrayByAddingObject:@""]}];
+        return @[@{@"VALS": [titles arrayByAddingObjectsFromArray:@[RecorderComputerSound, @""]]}];
     };
     sound.get = ^{ return @[weakSelf.sound ?: @""]; };
     sound.set = ^NSString *(NSArray *arguments) {
         NSString *title = StringFrom(arguments);
         if (title == nil)
         {
-            return @"expects the title of a source chosen, or an empty string";
+            return @"expects the title of a source chosen, computer, or an empty string";
         }
-        if (title.length > 0 && [weakSelf placeTitleMatching:title] == nil)
+        if ([weakSelf soundChoiceMatching:title] == nil)
         {
-            return [NSString stringWithFormat:@"“%@” is not one of the sources chosen", title];
+            return [NSString stringWithFormat:@"“%@” is not one of the sources chosen, nor %@", title, RecorderComputerSound];
         }
         weakSelf.sound = title;
         return nil;

@@ -89,10 +89,19 @@ final class FakeDirectory: NSObject, SourceDirectory {
     }
 }
 
+/// The Mac's sound, as the test gives it.
+final class FakeComputerSound: NSObject, SoundSource {
+    var soundHandler: ((SourceSound) -> Void)?
+    private(set) var running = false
+    func start() -> Bool { running = true; return true }
+    func stop() { running = false }
+}
+
 /// A controller over fake sources, with its own defaults and a folder of its own.
 struct TestRecorder {
     let device: MTLDevice
     let directory: FakeDirectory
+    let computerSound: FakeComputerSound
     let controller: RecorderController
     let folder: URL
     private let defaultsName: String
@@ -105,7 +114,8 @@ struct TestRecorder {
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         defaultsName = "SimpleRecorderTests-\(UUID().uuidString)"
         directory = FakeDirectory(Self.titles + ndi, ndi: Set(ndi))
-        controller = RecorderController(device: device, directory: directory, defaults: UserDefaults(suiteName: defaultsName)!)
+        computerSound = FakeComputerSound()
+        controller = RecorderController(device: device, directory: directory, computerSound: computerSound, defaults: UserDefaults(suiteName: defaultsName)!)
         controller.folder = folder.path
     }
 

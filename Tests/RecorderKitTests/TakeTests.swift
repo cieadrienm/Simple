@@ -453,24 +453,25 @@ final class TakeTests: XCTestCase {
 
     // MARK: Sound
 
-    /// Sound made by a source from one time to another, in pieces of 10 ms which arrive when their last sample is
-    /// made. Each piece is one object, given to every source of `indexes`.
+    /// Sound made by a source (or by the Mac when `computer` is true) from one time to another, in pieces of 10 ms
+    /// which arrive when their last sample is made. Each piece is one object, given to every source of `indexes`.
     private final class SoundFeed {
-        let indexes: [Int], from: Double, to: Double
+        let indexes: [Int], computer: Bool, from: Double, to: Double
         let rate = 48000.0, piece = 480
         let value: (Int) -> Float
         private(set) var given = 0
 
-        init(_ indexes: [Int], from: Double = 100, to: Double, value: @escaping (Int) -> Float) {
+        init(_ indexes: [Int], computer: Bool = false, from: Double = 100, to: Double, value: @escaping (Int) -> Float) {
             self.indexes = indexes
+            self.computer = computer
             self.from = from
             self.to = to
             self.value = value
         }
 
         /// A tone of half the full scale
-        convenience init(_ indexes: [Int], from: Double = 100, to: Double, frequency: Double) {
-            self.init(indexes, from: from, to: to) { Float(0.5 * sin(2 * .pi * frequency * Double($0) / 48000)) }
+        convenience init(_ indexes: [Int], computer: Bool = false, from: Double = 100, to: Double, frequency: Double) {
+            self.init(indexes, computer: computer, from: from, to: to) { Float(0.5 * sin(2 * .pi * frequency * Double($0) / 48000)) }
         }
 
         /// Gives the take the pieces which have arrived by a time.
@@ -488,6 +489,7 @@ final class TakeTests: XCTestCase {
                 }
                 let sound = SourceSound(interleavedStereoSamples: samples, frameCount: UInt(count), sampleRate: rate)!
                 for index in indexes { take.append(sound, fromSourceAt: UInt(index), atTime: arrival) }
+                if computer { take.appendComputerSound(sound, atTime: arrival) }
                 given += count
             }
         }
@@ -496,12 +498,13 @@ final class TakeTests: XCTestCase {
     /// Starts a take of 320 × 180 sources at 100, records their frames and the assembled picture 30 times a second
     /// until `end` and, before each, the sound which has arrived; finishes at `end`.
     private func recordWithSound(_ titles: [String], output: TakeOutput, soundSources: [Int], assembledSoundIndex: Int?,
-                                 sound: [SoundFeed], end: Double = 102, settings: MovieRecorderSettings = MovieRecorderSettings(),
+                                 computerSound: Bool = false, sound: [SoundFeed], end: Double = 102,
+                                 settings: MovieRecorderSettings = MovieRecorderSettings(),
                                  sourcesFrom: Double = 100, assembledFrom: Double = 100) throws {
         let assembledSize = NSSize(width: 320 * titles.count, height: 180)
         try take.start(withSourceTitles: titles, sizes: titles.map { _ in NSNull() }, output: output, assembledSize: assembledSize,
                        soundSources: IndexSet(soundSources), assembledSound: assembledSoundIndex.map(UInt.init) ?? UInt(NSNotFound),
-                       name: "take", folder: folder, settings: settings, atTime: 100)
+                       computerSound: computerSound, name: "take", folder: folder, settings: settings, atTime: 100)
         let source = texture(320, 180), picture = texture(Int(assembledSize.width), 180)
         let count = Int(((end - 100) * 30).rounded())
         for frame in 0..<count {
@@ -617,5 +620,31 @@ final class TakeTests: XCTestCase {
         SoundFeed([0], to: 101, frequency: 1000).give(to: take, upTo: 101)
         XCTAssertNotNil(finish(at: 101), "no frame was received")
         XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: folder.path), [])
+    }
+
+    func testComputerSoundGoesToTheAssembledMovieInAssembledAndBoth() throws {
+        // In Both: the assembled movie takes the Mac's sound, NDI sources keep their own, and Syphon sources stay silent
+        try recordWithSound(["Syphon", "NDI"], output: .both, soundSources: [1], assembledSoundIndex: 1, computerSound: true,
+                            sound: [SoundFeed([1], to: 102, frequency: 1000), SoundFeed([], computer: true, to: 102, frequency: 2000)])
+
+        let assembled = try XCTUnwrap(take.assembledMovie)
+        XCTAssertTrue(assembled.hasSound)
+        XCTAssertEqual(try SoundInfo(assembled.url).frequency(from: 0.2, to: 1.8), 2000, accuracy: 10)
+        XCTAssertEqual(assembled.soundWritten, 2, accuracy: 0.03)
+        XCTAssertFalse(take.movies[0].hasSound)
+        XCTAssertFalse(try SoundInfo.hasSound(take.movies[0].url))
+        XCTAssertTrue(take.movies[1].hasSound)
+        XCTAssertEqual(try SoundInfo(take.movies[1].url).frequency(from: 0.2, to: 1.8), 1000, accuracy: 5)
+    }
+
+    func testComputerSoundGoesToNonNDIMoviesInSeparate() throws {
+        // In Separate: Syphon sources (not in soundSources) get the Mac's sound, while NDI sources keep their own
+        try recordWithSound(["Syphon A", "NDI", "Syphon B"], output: .separate, soundSources: [1], assembledSoundIndex: nil, computerSound: true,
+                            sound: [SoundFeed([1], to: 102, frequency: 1000), SoundFeed([], computer: true, to: 102, frequency: 2000)])
+
+        XCTAssertEqual(take.movies.map(\.hasSound), [true, true, true])
+        XCTAssertEqual(try SoundInfo(take.movies[0].url).frequency(from: 0.2, to: 1.8), 2000, accuracy: 10)
+        XCTAssertEqual(try SoundInfo(take.movies[1].url).frequency(from: 0.2, to: 1.8), 1000, accuracy: 5)
+        XCTAssertEqual(try SoundInfo(take.movies[2].url).frequency(from: 0.2, to: 1.8), 2000, accuracy: 10)
     }
 }

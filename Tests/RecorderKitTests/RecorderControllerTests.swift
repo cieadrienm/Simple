@@ -92,6 +92,29 @@ final class FakeDirectory: NSObject, SourceDirectory {
     }
 }
 
+/// The Mac's sound, as the test gives it.
+final class FakeComputerSound: NSObject, SoundSource {
+    var soundHandler: ((SourceSound) -> Void)?
+    private(set) var running = false
+    private(set) var startCount = 0
+    private(set) var stopCount = 0
+
+    func start() -> Bool {
+        running = true
+        startCount += 1
+        return true
+    }
+
+    func stop() {
+        running = false
+        stopCount += 1
+    }
+
+    func deliverSound(_ sound: SourceSound) {
+        if running { soundHandler?(sound) }
+    }
+}
+
 final class RecorderControllerTests: XCTestCase {
     private var device: MTLDevice!
     private var folder: URL!
@@ -100,6 +123,7 @@ final class RecorderControllerTests: XCTestCase {
     private var directory: FakeDirectory!
     /// NDI's, beside `directory`, for the tests whose controller has both
     private var ndiDirectory: FakeDirectory?
+    private var computerSound: FakeComputerSound!
     private var controller: RecorderController!
 
     private let all = ["main view - eMotion", "depthMap - eMotion", "A - Simple Server", "B - Simple Server"]
@@ -111,7 +135,8 @@ final class RecorderControllerTests: XCTestCase {
         defaultsName = "RecorderControllerTests-\(UUID().uuidString)"
         defaults = try XCTUnwrap(UserDefaults(suiteName: defaultsName))
         directory = FakeDirectory(all)
-        controller = RecorderController(device: device, directory: directory, defaults: defaults)
+        computerSound = FakeComputerSound()
+        controller = RecorderController(device: device, directory: directory, computerSound: computerSound, defaults: defaults)
         controller.folder = folder.path
     }
 
@@ -1380,7 +1405,9 @@ final class RecorderControllerTests: XCTestCase {
         directory = FakeDirectory(syphon)
         let ndiDirectory = FakeDirectory(ndi, kind: .NDI)
         self.ndiDirectory = ndiDirectory
-        controller = RecorderController(device: device, directory: CompositeDirectory(directories: [directory, ndiDirectory]), defaults: defaults)
+        computerSound = FakeComputerSound()
+        controller = RecorderController(device: device, directory: CompositeDirectory(directories: [directory, ndiDirectory]),
+                                        computerSound: computerSound, defaults: defaults)
         controller.folder = folder.path
     }
 
@@ -1481,8 +1508,10 @@ final class RecorderControllerTests: XCTestCase {
     // MARK: Sound
 
     /// Delivers frames as `deliverFrames` does and, beside them, a tone from each source of `tones` (title: frequency)
-    /// in pieces of 20 ms, as they would arrive: paced by the clock, the tone going on from one piece to the next.
-    private func deliverFramesAndSound(for seconds: Double, frames: [(String, MTLTexture)], tones: [String: Double]) {
+    /// and from the Mac when `computerTone` is given, in pieces of 20 ms, as they would arrive: paced by the clock,
+    /// the tone going on from one piece to the next.
+    private func deliverFramesAndSound(for seconds: Double, frames: [(String, MTLTexture)], tones: [String: Double],
+                                       computerTone: Double? = nil) {
         let directories = [directory!] + (ndiDirectory.map { [$0] } ?? [])
         let live: () -> [(FakeSource, MTLTexture)] = {
             frames.compactMap { title, texture in directories.lazy.compactMap { $0.source(title) }.first.map { ($0, texture) } }
@@ -1490,24 +1519,30 @@ final class RecorderControllerTests: XCTestCase {
         let sounding: () -> [(FakeSource, Double)] = {
             tones.compactMap { title, frequency in directories.lazy.compactMap { $0.source(title) }.first.map { ($0, frequency) } }
         }
-        let pairs = live(), soundPairs = sounding()
+        let pairs = live(), soundPairs = sounding(), computer = computerSound!
         let delivered = expectation(description: "frames and sound delivered")
         DispatchQueue.global().async {
             let rate = 48000.0, piece = 960
             let start = Date(), end = start.addingTimeInterval(seconds)
             var given = 0
+            func makeTone(_ frequency: Double, from offset: Int) -> SourceSound {
+                var samples = [Float](repeating: 0, count: piece * 2)
+                for index in 0..<piece {
+                    let value = Float(0.5 * sin(2 * .pi * frequency * Double(offset + index) / rate))
+                    samples[2 * index] = value
+                    samples[2 * index + 1] = value
+                }
+                return SourceSound(interleavedStereoSamples: samples, frameCount: UInt(piece), sampleRate: rate)!
+            }
             while Date() < end {
                 for (source, texture) in pairs { source.deliver(texture) }
                 let due = Int(Date().timeIntervalSince(start) * rate)
                 while given + piece <= due {
                     for (source, frequency) in soundPairs {
-                        var samples = [Float](repeating: 0, count: piece * 2)
-                        for index in 0..<piece {
-                            let value = Float(0.5 * sin(2 * .pi * frequency * Double(given + index) / rate))
-                            samples[2 * index] = value
-                            samples[2 * index + 1] = value
-                        }
-                        source.deliverSound(SourceSound(interleavedStereoSamples: samples, frameCount: UInt(piece), sampleRate: rate)!)
+                        source.deliverSound(makeTone(frequency, from: given))
+                    }
+                    if let computerTone {
+                        computer.deliverSound(makeTone(computerTone, from: given))
                     }
                     given += piece
                 }
@@ -1820,7 +1855,7 @@ final class RecorderControllerTests: XCTestCase {
         let node = get("/sound")
         XCTAssertEqual(node["TYPE"] as? String, "s")
         XCTAssertEqual(node["VALUE"] as? [String], [""])
-        XCTAssertEqual((node["RANGE"] as? [[String: [String]]])?.first?["VALS"], [a, camera, ""])
+        XCTAssertEqual((node["RANGE"] as? [[String: [String]]])?.first?["VALS"], [a, camera, "computer", ""])
         XCTAssertFalse((node["DESCRIPTION"] as? String ?? "").isEmpty)
         send("/sound", "studio")
         XCTAssertEqual(get("/sound")["VALUE"] as? [String], [camera])
@@ -1843,7 +1878,63 @@ final class RecorderControllerTests: XCTestCase {
 
         // The values follow the places
         controller.removeSource(atPlace: 1)
-        XCTAssertEqual((get("/sound")["RANGE"] as? [[String: [String]]])?.first?["VALS"], [camera, ""])
+        XCTAssertEqual((get("/sound")["RANGE"] as? [[String: [String]]])?.first?["VALS"], [camera, "computer", ""])
+    }
+
+    func testComputerSoundCanBeChosenWithoutAPlaceAndSurvivesRelaunch() {
+        XCTAssertEqual(controller.places.count, 0)
+        send("/sound", "Computer")
+        XCTAssertEqual(controller.sound, RecorderComputerSound)
+        XCTAssertEqual(controller.error, "")
+        let next = RecorderController(device: device, directory: directory, computerSound: computerSound, defaults: defaults)
+        XCTAssertEqual(next.sound, RecorderComputerSound)
+        controller.sound = ""
+        XCTAssertEqual(controller.sound, "")
+        controller.sound = RecorderComputerSound
+        XCTAssertEqual(controller.sound, RecorderComputerSound)
+    }
+
+    func testComputerSoundInAssembledAndBothGoesToTheAssembledMovie() throws {
+        useSyphonAndNDI(syphon: [a], ndi: [camera])
+        tick([a, camera])
+        send("/output", "both")
+        send("/sound", "computer")
+        send("/name", "show")
+        let pictures = [(a, makeTexture()), (camera, makeTexture())]
+        XCTAssertFalse(computerSound.running)
+        XCTAssertTrue(controller.start())
+        XCTAssertTrue(computerSound.running)
+        deliverFramesAndSound(for: 1.5, frames: pictures, tones: [camera: 1000], computerTone: 2000)
+        settle()
+        XCTAssertGreaterThan(controller.assembledSoundWritten, 1)
+        stopAndWait()
+        XCTAssertFalse(computerSound.running)
+        XCTAssertEqual(controller.error, "")
+
+        XCTAssertEqual(try sound(controller.assembledFile).frequency(from: 0.3, to: 1.3), 2000, accuracy: 10)
+        XCTAssertFalse(try hasSound(controller.places[0].file), "Syphon's own movie in Both has no sound")
+        XCTAssertEqual(try sound(controller.places[1].file).frequency(from: 0.3, to: 1.3), 1000, accuracy: 5, "NDI's own movie keeps its NDI sound")
+    }
+
+    func testComputerSoundInSeparateGoesToSyphonMoviesAndLeavesNDIAlone() throws {
+        useSyphonAndNDI(syphon: [a, b], ndi: [camera])
+        tick([a, camera, b])
+        send("/output", "separate")
+        send("/sound", "computer")
+        send("/name", "show")
+        let pictures = [(a, makeTexture()), (camera, makeTexture()), (b, makeTexture())]
+        XCTAssertTrue(controller.start())
+        XCTAssertTrue(computerSound.running)
+        deliverFramesAndSound(for: 1.5, frames: pictures, tones: [camera: 1000], computerTone: 2000)
+        settle()
+        XCTAssertGreaterThan(controller.places[0].soundWritten, 1)
+        stopAndWait()
+        XCTAssertFalse(computerSound.running)
+        XCTAssertEqual(controller.error, "")
+
+        XCTAssertEqual(try sound(controller.places[0].file).frequency(from: 0.3, to: 1.3), 2000, accuracy: 10)
+        XCTAssertEqual(try sound(controller.places[1].file).frequency(from: 0.3, to: 1.3), 1000, accuracy: 5)
+        XCTAssertEqual(try sound(controller.places[2].file).frequency(from: 0.3, to: 1.3), 2000, accuracy: 10)
     }
 
     // MARK: OSCQuery

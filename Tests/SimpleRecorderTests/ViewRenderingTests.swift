@@ -177,6 +177,16 @@ final class ViewRenderingTests: XCTestCase {
         XCTAssertGreaterThan(colours(try render("10-sound")), 8)
     }
 
+    func testTheWindowWithComputerSound() throws {
+        model.tick("main view - eMotion")
+        model.setOutput("separate")
+        model.setSound(RecorderModel.computerSound)
+        deliver(0.3)
+        XCTAssertEqual(model.sound, "computer")
+        XCTAssertFalse(model.soundIsMissing)
+        XCTAssertGreaterThan(colours(try render("10b-computer-sound")), 8)
+    }
+
     func testTheWindowWithTheSoundOfASourceWhichIsNotSelected() throws {
         try useNDISources(available: true)
         model.tick("STUDIO (Camera 1)")

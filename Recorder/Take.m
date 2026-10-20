@@ -83,8 +83,12 @@ static const CGFloat kLargestSide = 16384;
     NSArray<TakeMovie *> *_movies;
     MovieRecorder *_assembledRecorder;
     TakeMovie *_assembledMovie;
+    // The sources whose movies take their own sound
+    NSIndexSet *_soundSources;
     // The source whose sound the assembled movie takes, NSNotFound for none
     NSUInteger _assembledSoundIndex;
+    // The movies which take the sound played on the Mac
+    NSArray<TakeMovie *> *_computerSoundMovies;
     BOOL _recording;
     BOOL _finishing;
 }
@@ -97,7 +101,9 @@ static const CGFloat kLargestSide = 16384;
         _device = device;
         _recorders = [NSMutableArray array];
         _movies = @[];
+        _soundSources = [NSIndexSet indexSet];
         _assembledSoundIndex = NSNotFound;
+        _computerSoundMovies = @[];
     }
     return self;
 }
@@ -247,6 +253,24 @@ static NSError *TakeError(NSString *description)
                        atTime:(NSTimeInterval)time
                         error:(NSError **)error
 {
+    return [self startWithSourceTitles:titles sizes:sizes output:output assembledSize:assembledSize
+                          soundSources:soundSources assembledSoundIndex:assembledSoundIndex computerSound:NO
+                                  name:name folder:folder settings:settings atTime:time error:error];
+}
+
+- (BOOL)startWithSourceTitles:(NSArray<NSString *> *)titles
+                        sizes:(NSArray *)sizes
+                       output:(TakeOutput)output
+                assembledSize:(NSSize)assembledSize
+                 soundSources:(NSIndexSet *)soundSources
+          assembledSoundIndex:(NSUInteger)assembledSoundIndex
+                computerSound:(BOOL)computerSound
+                         name:(NSString *)name
+                       folder:(NSURL *)folder
+                     settings:(MovieRecorderSettings *)settings
+                       atTime:(NSTimeInterval)time
+                        error:(NSError **)error
+{
     NSString *problem = nil;
     BOOL isFolder = NO;
     @synchronized (self)
@@ -321,11 +345,12 @@ static NSError *TakeError(NSString *description)
     NSURL *assembledURL = nil;
     NSArray<NSURL *> *urls = [Take urlsForName:name sourceTitles:titles output:output inFolder:folder assembledURL:&assembledURL];
     NSMutableArray<TakeMovie *> *movies = [NSMutableArray array];
+    NSMutableArray<TakeMovie *> *computerSoundMovies = [NSMutableArray array];
     __weak Take *weakSelf = self;
 
     // The assembled movie first: its size is known, and if the codec cannot write it nothing has been started
     TakeMovie *assembledMovie = nil;
-    if (!assembled || assembledSoundIndex >= titles.count)
+    if (!assembled || computerSound || assembledSoundIndex >= titles.count)
     {
         assembledSoundIndex = NSNotFound;
     }
@@ -338,8 +363,12 @@ static NSError *TakeError(NSString *description)
         MovieRecorderSettings *own = [settings copy];
         own.width = (NSInteger)assembledSize.width;
         own.height = (NSInteger)assembledSize.height;
-        own.recordsSound = assembledSoundIndex != NSNotFound;
+        own.recordsSound = computerSound || assembledSoundIndex != NSNotFound;
         assembledMovie.hasSound = own.recordsSound;
+        if (computerSound)
+        {
+            [computerSoundMovies addObject:assembledMovie];
+        }
         __weak TakeMovie *weakMovie = assembledMovie;
         assembledMovie.recorder.failureHandler = ^(NSError *failure) {
             weakMovie.error = failure;
@@ -376,8 +405,14 @@ static NSError *TakeError(NSString *description)
         id size = index < sizes.count ? sizes[index] : [NSNull null];
         own.width = [size isKindOfClass:[NSValue class]] ? (NSInteger)[size sizeValue].width : 0;
         own.height = [size isKindOfClass:[NSValue class]] ? (NSInteger)[size sizeValue].height : 0;
-        own.recordsSound = [soundSources containsIndex:index];
+        BOOL takesOwnSound = [soundSources containsIndex:index];
+        BOOL takesComputerSound = computerSound && !assembled && !takesOwnSound;
+        own.recordsSound = takesOwnSound || takesComputerSound;
         movie.hasSound = own.recordsSound;
+        if (takesComputerSound)
+        {
+            [computerSoundMovies addObject:movie];
+        }
 
         __weak TakeMovie *weakMovie = movie;
         movie.recorder.failureHandler = ^(NSError *failure) {
@@ -409,7 +444,9 @@ static NSError *TakeError(NSString *description)
     {
         _movies = [movies copy];
         _assembledMovie = assembledMovie;
+        _soundSources = [soundSources copy] ?: [NSIndexSet indexSet];
         _assembledSoundIndex = assembledSoundIndex;
+        _computerSoundMovies = [computerSoundMovies copy];
         _recording = YES;
     }
     return YES;
@@ -456,6 +493,7 @@ static NSError *TakeError(NSString *description)
 {
     NSArray<TakeMovie *> *movies;
     TakeMovie *assembledMovie;
+    NSIndexSet *soundSources;
     NSUInteger assembledSoundIndex;
     @synchronized (self)
     {
@@ -465,16 +503,34 @@ static NSError *TakeError(NSString *description)
         }
         movies = _movies;
         assembledMovie = _assembledMovie;
+        soundSources = _soundSources;
         assembledSoundIndex = _assembledSoundIndex;
     }
     // The same sound may go to both: it does not change
-    if (index < movies.count && movies[index].hasSound)
+    if (index < movies.count && [soundSources containsIndex:index])
     {
         [movies[index].recorder appendSound:sound atTime:time];
     }
     if (index == assembledSoundIndex && assembledMovie)
     {
         [assembledMovie.recorder appendSound:sound atTime:time];
+    }
+}
+
+- (void)appendComputerSound:(SourceSound *)sound atTime:(NSTimeInterval)time
+{
+    NSArray<TakeMovie *> *movies;
+    @synchronized (self)
+    {
+        if (!_recording)
+        {
+            return;
+        }
+        movies = _computerSoundMovies;
+    }
+    for (TakeMovie *movie in movies)
+    {
+        [movie.recorder appendSound:sound atTime:time];
     }
 }
 

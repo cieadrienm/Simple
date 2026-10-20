@@ -3,6 +3,11 @@ Changelog
 
 The version is `VERSION` in `Scripts/bundle.sh`; each release is tagged `vX.Y.Z` in git.
 
+1.1.0 — 2026-10-20
+------------------
+
+- Computer sound (`Computer` in *Sound*, or `/sound computer`): records the sound being played on the Mac (in the assembled movie when *Assembled* or *Both* is chosen, or in each Syphon source's movie when *Separate* is chosen), through a Core Audio process tap without Screen Recording permission.
+
 1.0.0 — 2026-10-05
 ------------------
 

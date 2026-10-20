@@ -35,5 +35,7 @@
 	</array>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Simple Recorder can be controlled over the network with OSC, and announces itself to OSCQuery applications. NDI sources are found on the network.</string>
+	<key>NSAudioCaptureUsageDescription</key>
+	<string>Simple Recorder records the sound played on this Mac when Sound is set to Computer.</string>
 </dict>
 </plist>

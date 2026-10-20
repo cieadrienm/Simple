@@ -135,6 +135,22 @@ typedef NS_ENUM(NSInteger, TakeOutput) {
                        atTime:(NSTimeInterval)time
                         error:(NSError **)error;
 
+// The same, with the sound played on the Mac.
+// computerSound: for TakeOutputAssembled and TakeOutputBoth, the assembled movie takes the Mac's sound instead of
+// assembledSoundIndex; for TakeOutputSeparate, the sources' movies which are not in soundSources take it.
+- (BOOL)startWithSourceTitles:(NSArray<NSString *> *)titles
+                        sizes:(NSArray *)sizes
+                       output:(TakeOutput)output
+                assembledSize:(NSSize)assembledSize
+                 soundSources:(NSIndexSet *)soundSources
+          assembledSoundIndex:(NSUInteger)assembledSoundIndex
+                computerSound:(BOOL)computerSound
+                         name:(NSString *)name
+                       folder:(NSURL *)folder
+                     settings:(MovieRecorderSettings *)settings
+                       atTime:(NSTimeInterval)time
+                        error:(NSError **)error;
+
 // Can be called from any thread, and returns at once. Does nothing for TakeOutputAssembled. index is the source's place in the titles given at the start.
 - (void)appendTexture:(id<MTLTexture>)texture flipped:(BOOL)flipped fromSourceAtIndex:(NSUInteger)index atTime:(NSTimeInterval)time;
 
@@ -147,6 +163,9 @@ typedef NS_ENUM(NSInteger, TakeOutput) {
 // A source's sound, which arrived at time: to its own movie if it has a sound track, and to the assembled movie if it
 // is the source chosen for it. Any thread; returns at once. Does nothing once the take has stopped.
 - (void)appendSound:(SourceSound *)sound fromSourceAtIndex:(NSUInteger)index atTime:(NSTimeInterval)time;
+
+// Sound played on the Mac, which arrived at time: to the movies which take it. Any thread; returns at once.
+- (void)appendComputerSound:(SourceSound *)sound atTime:(NSTimeInterval)time;
 
 // Finishes every movie. handler is called on the main queue, with an error if no movie received a frame. A movie
 // which failed on its own has its error in movies.

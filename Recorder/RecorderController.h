@@ -29,6 +29,7 @@
 
 #import <Foundation/Foundation.h>
 #import <Metal/Metal.h>
+#import "ComputerSound.h"
 #import "FrameSource.h"
 #import "Layout.h"
 #import "OSCMessage.h"
@@ -43,6 +44,8 @@ extern NSNotificationName const RecorderControllerDidChangeNotification;
 extern const NSUInteger RecorderMaximumPlaces;
 // How many pictures a second are shown at most while the display is limited (see performance)
 extern const double RecorderLimitedDisplayRate;
+// Value of sound (/sound) for the sound played on the Mac, rather than a source's
+extern NSString * const RecorderComputerSound;
 
 /*
  One of the sources chosen for recording, and what it is doing. Places are numbered from 1, in the order chosen.
@@ -83,6 +86,10 @@ extern const double RecorderLimitedDisplayRate;
 - (instancetype)initWithDevice:(id<MTLDevice>)device
                      directory:(id<SourceDirectory>)directory
                       defaults:(NSUserDefaults *)defaults;
+- (instancetype)initWithDevice:(id<MTLDevice>)device
+                     directory:(id<SourceDirectory>)directory
+                 computerSound:(id<SoundSource>)computerSound
+                      defaults:(NSUserDefaults *)defaults;
 
 // The device the sources' frames are textures of
 @property (readonly) id<MTLDevice> device;
@@ -99,10 +106,12 @@ extern const double RecorderLimitedDisplayRate;
 @property (nonatomic, copy) NSString *output;     // /output: one of +[Take outputNames]: "separate", "assembled", "both"
 @property (nonatomic, copy) NSString *layout;     // /layout: one of +[Layout kindNames]: "row", "column", "grid", "focus"
 @property (nonatomic, assign) NSInteger gap;      // /gap: pixels between sources in the assembled picture
-// /sound: the title of the source whose sound goes in the assembled movie; empty for none. Set with a title or a part
-// of one, as a place is: it must be one of the sources chosen, and a name which matches none changes nothing. The
-// full title is kept, even when its source is no longer chosen: the assembled movie then has no sound, which is no
-// error, and it applies again if the source is chosen again. A change applies to the next take.
+// /sound: the title of the source whose sound goes in the assembled movie, "computer" (RecorderComputerSound) for the
+// sound played on the Mac (in the assembled movie, or in each Syphon movie when output is "separate"), or empty for
+// none. Set with a title or a part of one, as a place is, or "computer": a source must be one of those chosen, and a
+// name which matches none changes nothing. A source's full title is kept, even when it is no longer chosen: the
+// assembled movie then has no sound, which is no error, and it applies again if the source is chosen again. A change
+// applies to the next take.
 @property (nonatomic, copy) NSString *sound;
 // /performance: while a take is in progress (recording or finishing), the picture composed only to be shown is
 // composed RecorderLimitedDisplayRate times a second at most, to leave the GPU to the encoders. Idle, the display

@@ -64,6 +64,26 @@ struct InspectorView: View {
                     Text("Mbit/s").font(.system(size: 11)).foregroundStyle(Theme.textFaint)
                 }
             }
+            row("Sound") {
+                Picker("", selection: Binding(get: { model.sound }, set: { model.setSound($0) })) {
+                    Text("None").tag("")
+                    Text("Computer").tag(RecorderModel.computerSound)
+                    ForEach(model.soundChoices, id: \.self) { Text($0).tag($0) }
+                    if model.soundIsMissing {
+                        Text("\(model.sound) (not selected)").tag(model.sound)
+                    }
+                }
+                .labelsHidden()
+                .disabled(model.isRecording)
+                .help("The sound recorded: the Mac’s, or one of the sources’ for the assembled movie")
+            }
+            if model.soundIsMissing {
+                // The picker's text is cut at this width: the hint says what its entry says
+                Text("\(model.sound) is not selected: the assembled movie has no sound.")
+                    .font(.system(size: 10)).foregroundStyle(Theme.textFaint)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .opacity(model.output == "separate" ? 0.5 : 1)
+            }
 
             Theme.sectionTitle("Assembled").padding(.top, 10)
             // The picture of a take does not change: these are for the next one
@@ -93,26 +113,6 @@ struct InspectorView: View {
                             .textFieldStyle(.roundedBorder)
                         Text("pixels").font(.system(size: 11)).foregroundStyle(Theme.textFaint)
                     }
-                }
-                row("Sound") {
-                    Picker("", selection: Binding(get: { model.sound }, set: { model.setSound($0) })) {
-                        Text("None").tag("")
-                        ForEach(model.soundChoices, id: \.self) { Text($0).tag($0) }
-                        if model.soundIsMissing {
-                            Text("\(model.sound) (not selected)").tag(model.sound)
-                        }
-                    }
-                    .labelsHidden()
-                    .help("The source whose sound the assembled movie takes")
-                }
-                // Only the assembled movie takes it: the setting stays in sight
-                .opacity(model.output == "separate" ? 0.5 : 1)
-                if model.soundIsMissing {
-                    // The picker's text is cut at this width: the hint says what its entry says
-                    Text("\(model.sound) is not selected: the assembled movie has no sound.")
-                        .font(.system(size: 10)).foregroundStyle(Theme.textFaint)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .opacity(model.output == "separate" ? 0.5 : 1)
                 }
             }
             .disabled(model.isRecording)

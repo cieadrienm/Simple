@@ -12,7 +12,7 @@ set -e
 cd "$(dirname "$0")/.."
 # The version shown by the Finder, About and /status/version: bump it here, and only here (CHANGELOG.md says what
 # changed; a release is tagged vX.Y.Z). The build number counts commits.
-VERSION="1.0.0"
+VERSION="1.1.0"
 BUILD="$(git rev-list --count HEAD 2>/dev/null || echo 1)"
 
 Scripts/syphon.sh

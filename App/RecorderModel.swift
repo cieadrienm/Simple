@@ -97,8 +97,9 @@ final class RecorderModel: ObservableObject {
     @Published private(set) var titleRects: [CGRect] = []
     @Published private(set) var assembledFrames = 0
     @Published private(set) var assembledDropped = 0
-    /// The title of the source whose sound the assembled movie takes, empty for none
+    /// The title of the source whose sound the assembled movie takes, "computer" for the Mac's sound, empty for none
     @Published private(set) var sound = ""
+    static let computerSound = RecorderComputerSound
     /// Seconds of sound left out of the take's movies, to the tenth
     @Published private(set) var soundLeftOut: Double = 0
     /// Whether NDI's library is loaded: without it NDI sources are not listed
@@ -125,12 +126,13 @@ final class RecorderModel: ObservableObject {
         }
     }
     /// Whether the title chosen for the assembled movie's sound is no place at all (its source was unticked).
-    /// A place which has not connected yet, or a Syphon one, is a place.
+    /// A place which has not connected yet, or a Syphon one, is a place; Computer is not a place.
     var soundIsMissing: Bool {
-        !sound.isEmpty && !places.contains { $0.title == sound }
+        !sound.isEmpty && sound != Self.computerSound && !places.contains { $0.title == sound }
     }
-    /// The titles the *Sound* picker offers after "None": the NDI places, those not heard from yet (sound may come),
-    /// and the one chosen if it is a place of another kind. Not the missing one: the view adds that, dimmed.
+    /// The source titles the *Sound* picker offers after "None" and "Computer": the NDI places, those not heard from
+    /// yet (sound may come), and the one chosen if it is a place of another kind. Not the missing one: the view adds
+    /// that, dimmed.
     var soundChoices: [String] {
         places.filter { $0.kind == "ndi" || $0.kind.isEmpty || $0.title == sound }.map(\.title)
     }
