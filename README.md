@@ -12,7 +12,8 @@ The window
 - **The picture**, in the middle: the sources assembled, live, as they are (or would be) recorded, each with its title over its part — the titles are not recorded. Under it, the four layouts and the picture's size. With *Separate* it is still shown: it is how the sources are watched. It follows every frame of its source, at the display's rate; in performance mode, while recording, it is shown ten times a second and "Display limited" says so.
 - **Settings**, on the right: the codec, frame rate, bitrate and sound (*Sound*: *None*, *Computer* for the sound played on this Mac, or one of the sources chosen) of the movies; the size of the assembled picture and the gap between its sources; the folder and the name; and *Performance mode* (under "Display"): while recording, the picture is shown ten times a second instead of at every frame, to leave the GPU to the encoders on a loaded machine. It applies at once, also during a recording, and changes nothing in the movies; when not recording the picture is as smooth as ever.
 - **The take**, on top: the record button (⌘R), which stays pressed and shows a stop square while recording, whatever started the recording; the time; frames written and dropped; and what a recording writes: *Separate*, *Assembled* or *Both*.
-- **The state**, at the bottom: the OSC and OSCQuery ports, whether NDI is available ("NDI on" or "NDI off"), the space left, how many movies a recording writes, why the last recording ended if it failed, and the version ("v1.0.0", or "dev" when not run from the app).
+- **The state**, at the bottom: the OSC and OSCQuery ports, whether NDI is available ("NDI on" or "NDI off"), the space left, how many movies a recording writes, why the last recording ended if it failed, and the version ("v0.9", or "dev" when not run from the app; clicking it opens the About window).
+- **Help** (`Help ▸ Simple Recorder Help`, ⌘?): a searchable HTML guide in a window of its own (`Resources/Help/index.html`).
 
 Recording
 ---------
@@ -88,7 +89,7 @@ Simple Recorder listens for OSC on UDP port **9230** and describes its parameter
 | `/width`, `/height` | int | read, write | The size the assembled picture is fitted into; 0 for the size the sources need |
 | `/sound` | string | read, write | What sound is recorded: `computer` for the sound played on this Mac, the title (or part of it) of one of the sources chosen for the assembled movie, or empty for none (the default). OSCQuery lists the titles and `computer` as its `RANGE`. |
 | `/performance` | int | read, write | 1: while recording, the picture in the window is drawn ten times a second, and composed only that often when no assembled movie needs it at every frame, to leave the GPU to the movies; 0 (the default): every frame. Any number but 0 counts as 1. It applies at once. |
-| `/status/version` | string | read | The version of Simple Recorder, as `1.0.0`; `dev` when it is not run from its application |
+| `/status/version` | string | read | The version of Simple Recorder, as `0.9`; `dev` when it is not run from its application |
 | `/status/state` | string | read | `idle`, `recording`, or `finishing` while the movies are completed |
 | `/status/elapsed` | float | read | Seconds recorded |
 | `/status/dropped` | int | read | Frames lost in all the movies because an encoder could not keep up |

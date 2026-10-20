@@ -97,7 +97,7 @@ struct Recorder {
                            "sound": (value(status + "sound") as? NSNumber)?.boolValue ?? false, "soundWritten": value(status + "soundwritten")])
         }
         return [
-            // The app's version (1.0.0), "dev" when it is not run from its bundle
+            // The app's version (0.9), "dev" when it is not run from its bundle
             "version": value("/status/version"),
             "sources": places,
             "ndi": (values["/status/ndi"] as? NSNumber)?.boolValue ?? false,
@@ -367,7 +367,7 @@ let settingsProperties: [String: Any] = [
 
 let tools: [[String: Any]] = [
     ["name": "recorder_status",
-     "description": "The state of Simple Recorder: its version (version: as 1.0.0, or dev when it is not run from its application); the sources chosen for recording, in order, with each one's kind (syphon or ndi) and what it delivers (online, size, frame rate) and its movie "
+     "description": "The state of Simple Recorder: its version (version: as 0.9, or dev when it is not run from its application); the sources chosen for recording, in order, with each one's kind (syphon or ndi) and what it delivers (online, size, frame rate) and its movie "
         + "(file, frames written and dropped, sound: true if the source is sending sound, which only NDI sources do, and soundWritten: seconds of sound in its movie); the sources which can be chosen (sourcesAvailable: a list of {title, kind}, kind being syphon or ndi; it was a list of titles before NDI sources came); whether NDI is usable (ndi: false when NDI's library is not installed, which only leaves NDI sources out); the settings, among them what a recording writes "
         + "(output: separate | assembled | both), what sound is recorded (sound: \"computer\", a source's title, or \"\"), how the sources are assembled (layout, gap, width, height) and whether the window's picture is held back while recording (performance); the assembled picture's size now and "
         + "the assembled movie (assembled: width, height, file, frames, dropped, soundWritten: seconds of sound in it); the seconds of sound left out in all the movies because an encoder could not keep up (soundLeftOut; pictures are never delayed for sound); whether it is recording "

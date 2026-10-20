@@ -45,8 +45,34 @@ struct SimpleRecorderApp: App {
         }
         .defaultSize(width: 1100, height: 680)
         .commands {
+            CommandGroup(replacing: .appInfo) {
+                Button("About \(Self.name)") {
+                    AboutWindowController.shared.show(model: delegate.model) {
+                        HelpWindowController.shared.show(version: delegate.model.version)
+                    }
+                }
+            }
             CommandGroup(replacing: .newItem) {
                 RecordCommand(model: delegate.model)
+            }
+            CommandGroup(replacing: .help) {
+                Button("\(Self.name) Help") {
+                    HelpWindowController.shared.show(version: delegate.model.version)
+                }
+                .keyboardShortcut("?", modifiers: .command)
+                Divider()
+                Button("Recording & Layouts") {
+                    HelpWindowController.shared.show(section: "dispositions", version: delegate.model.version)
+                }
+                Button("Sound (NDI & Computer)") {
+                    HelpWindowController.shared.show(section: "son", version: delegate.model.version)
+                }
+                Button("OSC & OSCQuery") {
+                    HelpWindowController.shared.show(section: "osc", version: delegate.model.version)
+                }
+                Button("Troubleshooting") {
+                    HelpWindowController.shared.show(section: "depannage", version: delegate.model.version)
+                }
             }
         }
     }

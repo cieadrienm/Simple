@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Aide Simple Recorder</title>
+<style>
+:root {
+  --bg: #111317; --panel: #16191E; --panel2: #1B1F26; --line: rgba(255,255,255,.08);
+  --text: #E6E8EC; --dim: #8A919E; --faint: #565D6A;
+  --accent: #FFB454; --snap: #5CE1E6; --cue: #7AA2F7; --stop: #FF5C57; --loop: #9ECE6A; --jump: #C792EA;
+}
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; scroll-padding-top: 20px; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.6 -apple-system, "SF Pro Text", system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
+a { color: var(--snap); text-decoration: none; } a:hover { text-decoration: underline; }
+nav { position: fixed; top: 0; bottom: 0; left: 0; width: 260px; background: var(--panel); border-right: 1px solid var(--line); overflow-y: auto; padding: 22px 14px 40px; }
+.brand { display: flex; align-items: center; gap: 10px; padding: 0 8px 16px; }
+.brand b { font-size: 16px; } .brand span { color: var(--dim); font-size: 12px; }
+.logo { width: 36px; height: 36px; border-radius: 9px; background: linear-gradient(180deg, #232833, #0F1115); display: grid; place-items: center; border: 1px solid rgba(255,255,255,.12); flex-shrink: 0; box-shadow: 0 3px 8px rgba(0,0,0,.4); }
+#search { width: 100%; padding: 9px 12px; border-radius: 9px; border: 1px solid var(--line); background: rgba(255,255,255,.05); color: var(--text); font: inherit; outline: none; margin-bottom: 14px; }
+#search:focus { border-color: rgba(255,180,84,.6); }
+nav .group { font-size: 10.5px; font-weight: 800; letter-spacing: 1.3px; text-transform: uppercase; color: var(--faint); margin: 16px 8px 6px; }
+nav a.item { display: block; padding: 5px 10px; border-radius: 7px; color: var(--dim); font-size: 13.5px; }
+nav a.item:hover { background: rgba(255,255,255,.05); color: var(--text); text-decoration: none; }
+nav a.item.on { background: rgba(255,180,84,.14); color: var(--accent); }
+nav a.item.hidden { display: none; }
+main { margin-left: 260px; padding: 40px 56px 120px; max-width: 980px; }
+header.hero h1 { font-size: 34px; letter-spacing: -.6px; margin: 0 0 6px; }
+header.hero p { color: var(--dim); font-size: 17px; margin: 0 0 24px; max-width: 720px; }
+section { padding-top: 12px; margin-bottom: 44px; }
+section.hidden { display: none; }
+h2 { font-size: 23px; letter-spacing: -.3px; margin: 0 0 12px; padding-bottom: 8px; border-bottom: 1px solid var(--line); }
+h3 { font-size: 16px; margin: 24px 0 8px; color: var(--text); }
+p { margin: 8px 0; } li { margin: 4px 0; }
+ul, ol { padding-left: 22px; }
+code { font: 13px ui-monospace, Menlo, monospace; background: rgba(255,255,255,.07); padding: 1px 6px; border-radius: 5px; color: #f0d7a8; }
+pre { background: var(--panel2); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; overflow-x: auto; }
+pre code { background: none; padding: 0; color: var(--text); }
+kbd { display: inline-block; min-width: 20px; padding: 0 6px; font: 600 12px -apple-system, system-ui; line-height: 20px; text-align: center; color: var(--text);
+  background: linear-gradient(#2a2e36, #22262d); border: 1px solid #3a3f49; border-bottom-width: 2px; border-radius: 5px; }
+.ui { font-weight: 650; color: #fff; }
+table { width: 100%; border-collapse: collapse; margin: 10px 0 16px; font-size: 14px; }
+th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { color: var(--dim); font-size: 12px; text-transform: uppercase; letter-spacing: .8px; font-weight: 700; }
+td:first-child { white-space: nowrap; }
+.note, .tip, .warn { border-radius: 10px; padding: 11px 14px; margin: 14px 0; font-size: 14px; border: 1px solid; }
+.tip { background: rgba(92,225,230,.07); border-color: rgba(92,225,230,.25); }
+.note { background: rgba(122,162,247,.07); border-color: rgba(122,162,247,.25); }
+.warn { background: rgba(255,180,84,.08); border-color: rgba(255,180,84,.3); }
+.tip b:first-child, .note b:first-child, .warn b:first-child { margin-right: 4px; }
+.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 10px; margin: 14px 0; }
+.card { background: var(--panel2); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; }
+.card b { display: block; margin-bottom: 3px; }
+.card span { color: var(--dim); font-size: 13px; }
+mark { background: rgba(255,180,84,.35); color: inherit; border-radius: 3px; }
+#noresult { display: none; color: var(--dim); padding: 30px 0; }
+@media (max-width: 820px) { nav { position: static; width: auto; border-right: 0; border-bottom: 1px solid var(--line); } main { margin-left: 0; padding: 24px 18px 80px; } }
+</style>
+</head>
+<body>
+<nav>
+  <div class="brand">
+    <div class="logo">
+      <svg width="26" height="26" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <rect x="10" y="18" width="48" height="52" rx="7" fill="rgba(92,225,230,.22)" stroke="#5CE1E6" stroke-width="6"/>
+        <rect x="65" y="18" width="25" height="23" rx="6" fill="rgba(92,225,230,.22)" stroke="#5CE1E6" stroke-width="6"/>
+        <rect x="65" y="47" width="25" height="23" rx="6" fill="rgba(92,225,230,.22)" stroke="#5CE1E6" stroke-width="6"/>
+        <circle cx="77" cy="74" r="17" fill="#12151A"/>
+        <circle cx="77" cy="74" r="13" fill="#FF5C57" stroke="#FFFFFF" stroke-width="3.2"/>
+      </svg>
+    </div>
+    <div><b>Simple Recorder</b><br><span>Aide · version <span id="version">0.9</span></span></div>
+  </div>
+  <input id="search" type="search" placeholder="Chercher (NDI, son, OSC…)" autocomplete="off">
+  <div id="toc"></div>
+</nav>
+
+<main>
+<header class="hero">
+  <h1>Aide Simple Recorder</h1>
+  <p>Enregistreur multi-sources Syphon et NDI sur une horloge commune : chaque source dans son propre film, toutes assemblées dans une seule image, ou les deux à la fois — avec le son NDI ou celui de l'ordinateur, piloté depuis la fenêtre, en OSC (OSCQuery) ou par MCP.</p>
+</header>
+
+<!-- ─────────────────────────────── Premiers pas ─────────────────────────────── -->
+<section id="premiers-pas" data-group="Commencer">
+  <h2>Premiers pas</h2>
+  <ol>
+    <li><b>Choisir les sources.</b> Dans la colonne <span class="ui">Sources</span> à gauche, coche les serveurs Syphon ou les sources NDI à enregistrer (jusqu'à huit). Glisse les sources cochées pour changer leur ordre dans l'image assemblée.</li>
+    <li><b>Choisir la sortie.</b> Dans la barre du haut, choisis ce que la prise écrit : <span class="ui">Separate</span> (un film <code>.mov</code> par source), <span class="ui">Assembled</span> (un seul film réunissant toutes les sources) ou <span class="ui">Both</span> (les deux).</li>
+    <li><b>Choisir le son.</b> Dans <span class="ui">Movie › Sound</span> à droite, choisis <span class="ui">None</span>, <span class="ui">Computer</span> (le son diffusé par ce Mac) ou l'une des sources NDI sélectionnées.</li>
+    <li><b>Enregistrer.</b> Clique sur le bouton rouge ou presse <kbd>⌘</kbd><kbd>R</kbd> (ou envoie <code>/record 1</code> en OSC). Clique à nouveau ou presse <kbd>⌘</kbd><kbd>R</kbd> pour arrêter et finaliser les films.</li>
+  </ol>
+  <div class="tip"><b>Astuce</b> Menu <span class="ui">Help › Simple Recorder Help</span> (<kbd>⌘</kbd><kbd>?</kbd>) rouvre cette aide à tout moment. Utilise <kbd>⌘</kbd><kbd>F</kbd> pour chercher un mot-clé dans la page.</div>
+</section>
+
+<section id="fenetre" data-group="Commencer">
+  <h2>La fenêtre</h2>
+  <div class="cards">
+    <div class="card"><b>La prise (en haut)</b><span>Bouton d'enregistrement (<kbd>⌘</kbd><kbd>R</kbd>), chronomètre, images écrites et perdues, et choix de sortie : <span class="ui">Separate</span>, <span class="ui">Assembled</span> ou <span class="ui">Both</span>.</span></div>
+    <div class="card"><b>Sources (à gauche)</b><span>Serveurs Syphon locaux et sources NDI du réseau (marquées « NDI »). Une note de musique signale les sources qui envoient du son.</span></div>
+    <div class="card"><b>L'image (au centre)</b><span>Aperçu en direct des sources assemblées avec leur titre en surimpression (les titres ne sont pas enregistrés). En bas de l'aperçu : les quatre dispositions et la taille de l'image.</span></div>
+    <div class="card"><b>Réglages (à droite)</b><span>Codec, cadence, débit, son (<span class="ui">Sound</span>), taille et espacement (<span class="ui">Gap</span>) de l'image assemblée, dossier et nom des fichiers, et <span class="ui">Performance mode</span>.</span></div>
+    <div class="card"><b>Barre d'état (en bas)</b><span>Ports OSC et OSCQuery actifs, état de NDI (<span class="ui">NDI on</span> / <span class="ui">NDI off</span>), espace disque libre, nombre de films écrits et version (cliquer ouvre la fenêtre À propos).</span></div>
+  </div>
+</section>
+
+<!-- ─────────────────────────────── Enregistrer ─────────────────────────────── -->
+<section id="dispositions" data-group="Enregistrer">
+  <h2>Enregistrement &amp; dispositions</h2>
+  <h3>Une prise, une horloge</h3>
+  <p>Tous les films d'une même prise partagent la même horloge : chacun commence dès que sa première image arrive, de sorte qu'ils s'alignent immédiatement lorsqu'on les superpose dans un logiciel de montage.</p>
+  <ul>
+    <li><b>Separate</b> : chaque source cochée est écrite dans son propre fichier <code>.mov</code>, à sa taille d'origine.</li>
+    <li><b>Assembled</b> : un seul fichier <code>.mov</code> réunit toutes les sources cochées dans une même image.</li>
+    <li><b>Both</b> : écrit à la fois le film assemblé et le film individuel de chaque source.</li>
+  </ul>
+
+  <h3>Les quatre dispositions</h3>
+  <p>Les sources sont assemblées dans leur ordre sur fond noir (transparent en ProRes 4444, qui conserve aussi la transparence propre de chaque source) :</p>
+  <table>
+    <tr><th>Disposition</th><th>Taille automatique de l'image</th></tr>
+    <tr><td><b>Row</b> (côte à côte)</td><td>Toutes les sources à la hauteur de la plus haute ; les largeurs s'additionnent.</td></tr>
+    <tr><td><b>Column</b> (empilées)</td><td>Toutes les sources à la largeur de la plus large ; les hauteurs s'additionnent.</td></tr>
+    <tr><td><b>Grid</b> (mosaïque)</td><td>Autant de colonnes que la racine carrée du nombre de sources (arrondie au supérieur) ; cellules à la taille de la plus grande source.</td></tr>
+    <tr><td><b>Focus</b> (une grande)</td><td>La première source à sa taille ; les suivantes se partagent sa hauteur dans une colonne à sa droite.</td></tr>
+  </table>
+  <p>Si une taille est fixée (<span class="ui">1920 × 1080</span>, <span class="ui">3840 × 2160</span> ou <span class="ui">Custom</span>), l'image assemblée y est ajustée sans déformation. La taille et la disposition d'une prise sont figées au démarrage de l'enregistrement : si une source s'absente, sa place reste noire ; si elle change de taille en cours de prise, elle s'ajuste dans son cadre.</p>
+  <div class="warn"><b>Limite de taille Metal</b> Une image assemblée de plus de <code>16384</code> pixels de côté ne peut pas être encodée : la prise refuse de démarrer et invite à fixer une taille dans <span class="ui">Assembled › Size</span>.</div>
+
+  <h3>Codecs, cadence et fichiers</h3>
+  <ul>
+    <li><b>Codec</b> : <span class="ui">H.264</span>, <span class="ui">HEVC</span>, <span class="ui">ProRes 422</span> ou <span class="ui">ProRes 4444</span> (avec couche alpha). Encodage matériel sur le GPU, hors du thread principal.</li>
+    <li><b>Frame rate</b> : <span class="ui">Same as source</span> (chaque image reçue est écrite) ou un plafond (24, 25, 30, 50, 60 i/s). Au-dessus du plafond, les images en trop sont écartées régulièrement.</li>
+    <li><b>Bitrate</b> : débit en Mbit/s pour H.264 et HEVC, ou automatique (vide / <code>0</code>). ProRes n'utilise pas ce réglage.</li>
+    <li><b>Noms des fichiers</b> : <code>&lt;nom&gt;.mov</code> pour le film assemblé (ou pour une source unique enregistrée seule), et <code>&lt;nom&gt; — &lt;source&gt;.mov</code> pour le film propre de chaque source. Si le champ <span class="ui">Name</span> est vide, le nom est <code>Simple Recorder</code> suivi de la date et de l'heure. Aucun fichier existant n'est jamais écrasé : un numéro (<code> 2</code>, <code> 3</code>…) est ajouté à tous les films de la prise.</li>
+    <li><b>Performance mode</b> (<span class="ui">Display › Performance mode</span> ou <code>/performance 1</code>) : pendant l'enregistrement uniquement, l'aperçu dans la fenêtre est dessiné 10 fois par seconde au lieu de suivre chaque image, afin de laisser le GPU aux encodeurs sur une machine chargée. Ce réglage s'applique immédiatement, même en cours de prise, et ne modifie en rien les films enregistrés.</li>
+  </ul>
+</section>
+
+<section id="sources" data-group="Enregistrer">
+  <h2>Sources Syphon &amp; NDI</h2>
+  <h3>Sélection et reconnexion automatique</h3>
+  <p>Seules les sources cochées (jusqu'à huit places, <code>/source/1</code> à <code>/source/8</code>) sont connectées. Les places sont verrouillées pendant un enregistrement.</p>
+  <ul>
+    <li><b>Waiting</b> : une place mémorisée d'une session précédente attend que son application démarre. Dès que la source apparaît, elle prend sa place.</li>
+    <li><b>Away</b> : une source qui disparaît en cours de route (application fermée ou relancée, émetteur NDI coupé) garde sa place en grisé et se reconnecte automatiquement dès son retour — même si l'application source a été tuée puis relancée.</li>
+  </ul>
+  <h3>Bibliothèque NDI</h3>
+  <p>Les sources NDI trouvées sur le réseau local apparaissent à côté des serveurs Syphon avec l'étiquette <span class="ui">NDI</span>. Simple Recorder charge <code>libndi.dylib</code> à l'exécution (incluse dans le paquet de l'application lorsque construite avec le SDK NDI, ou cherchée dans <code>$NDI_RUNTIME_DIR_V6</code>, <code>/usr/local/lib</code> et <code>/Library/NDI SDK for Apple</code>). Si la bibliothèque n'est pas présente, l'application fonctionne normalement en mode <span class="ui">NDI off</span> avec les sources Syphon.</p>
+</section>
+
+<section id="son" data-group="Enregistrer">
+  <h2>Le son (NDI et Ordinateur)</h2>
+  <p>Le menu <span class="ui">Movie › Sound</span> (ou l'adresse OSC <code>/sound</code>) choisit quel son accompagnera les films :</p>
+  <table>
+    <tr><th>Choix</th><th>Comportement selon la sortie</th></tr>
+    <tr><td><b>None</b> (<code>""</code>)</td><td>Le film assemblé et les films des sources Syphon n'ont pas de piste son. Les films séparés des sources NDI qui envoient de l'audio conservent leur propre son.</td></tr>
+    <tr><td><b>Computer</b> (<code>"computer"</code>)</td><td>Enregistre l'audio diffusé sur ce Mac (toutes les applications, pas le microphone) :<br>• Avec <span class="ui">Assembled</span> ou <span class="ui">Both</span> : le son de l'ordinateur va dans le film assemblé (les films séparés NDI gardent leur propre son).<br>• Avec <span class="ui">Separate</span> : le son de l'ordinateur va dans le film de chaque source Syphon (les sources NDI gardent leur propre son).</td></tr>
+    <tr><td><b>Une source NDI</b></td><td>Le film assemblé prend le son de cette source NDI. Une note (♪) dans la liste des sources indique celles qui envoient du son.</td></tr>
+  </table>
+  <div class="note"><b>Autorisation Audio du système</b> Lorsque <span class="ui">Computer</span> est choisi, Simple Recorder utilise un <em>process tap</em> Core Audio (macOS 14.2+), qui demande uniquement l'autorisation <span class="ui">Enregistrement de l'audio du système</span> — aucune autorisation d'enregistrement de l'écran n'est requise.</div>
+  <h3>Format et synchronisation</h3>
+  <ul>
+    <li><b>Format</b> : stéréo 48 kHz (les deux premiers canaux ; un canal mono est doublé). Encodé en AAC à 256 kbit/s avec H.264 et HEVC, ou en PCM linéaire 24 bits avec ProRes.</li>
+    <li><b>Film muet</b> : si aucun son non nul n'est reçu pendant toute la prise, le fichier <code>.mov</code> final ne comporte pas de piste audio inutile.</li>
+    <li><b>Priorité à l'image</b> : le son est calé sur son heure d'arrivée et maintenu en phase avec l'image. Si un encodeur prend du retard, du son est laissé de côté et compté dans <code>/status/sound/leftout</code> sans jamais ralentir l'enregistrement vidéo.</li>
+  </ul>
+</section>
+
+<!-- ─────────────────────────────── Pilotage ─────────────────────────────── -->
+<section id="osc" data-group="Pilotage">
+  <h2>OSC &amp; OSCQuery</h2>
+  <p>Simple Recorder écoute l'OSC en UDP sur le port <code>9230</code> et s'annonce en Bonjour (<code>_oscjson._tcp</code>) via OSCQuery en HTTP sur le port <code>9231</code> (ou le port libre suivant si celui-ci est occupé — la barre d'état en bas affiche toujours les ports actifs).</p>
+  <div class="tip"><b>Avec OSCScore</b> Dans OSCScore, presse <kbd>⌘</kbd><kbd>K</kbd> (<span class="ui">Add Track from OSCQuery…</span>) : Simple Recorder apparaît automatiquement avec toutes ses adresses, leurs types et la liste des sources disponibles.</div>
+
+  <h3>Adresses de commande (lecture / écriture)</h3>
+  <table>
+    <tr><th>Adresse</th><th>Type</th><th>Description</th></tr>
+    <tr><td><code>/record</code></td><td>int</td><td><code>1</code> démarre l'enregistrement, <code>0</code> l'arrête et finalise les films.</td></tr>
+    <tr><td><code>/record/toggle</code></td><td>–</td><td>Démarre ou arrête l'enregistrement.</td></tr>
+    <tr><td><code>/source/1</code> … <code>/source/8</code></td><td>string</td><td>La source à cette place : son titre exact ou une sous-chaîne. Vide (<code>""</code>) pour retirer la place. OSCQuery expose les sources disponibles dans <code>RANGE</code>.</td></tr>
+    <tr><td><code>/source</code></td><td>string</td><td>Alias de <code>/source/1</code>.</td></tr>
+    <tr><td><code>/output</code></td><td>string</td><td><code>separate</code>, <code>assembled</code> ou <code>both</code>.</td></tr>
+    <tr><td><code>/layout</code></td><td>string</td><td><code>row</code>, <code>column</code>, <code>grid</code> ou <code>focus</code>.</td></tr>
+    <tr><td><code>/codec</code></td><td>string</td><td><code>h264</code>, <code>hevc</code>, <code>prores422</code> ou <code>prores4444</code>.</td></tr>
+    <tr><td><code>/fps</code></td><td>float</td><td>Cadence maximale en i/s, ou <code>0</code> pour garder chaque image de la source.</td></tr>
+    <tr><td><code>/bitrate</code></td><td>float</td><td>Débit en Mbit/s (H.264 / HEVC), ou <code>0</code> pour automatique.</td></tr>
+    <tr><td><code>/sound</code></td><td>string</td><td><code>computer</code> pour le son du Mac, le titre (ou une partie) d'une source choisie pour le film assemblé, ou <code>""</code> pour aucun.</td></tr>
+    <tr><td><code>/width</code>, <code>/height</code></td><td>int</td><td>Taille dans laquelle l'image assemblée est ajustée (<code>0</code> = automatique).</td></tr>
+    <tr><td><code>/gap</code></td><td>int</td><td>Espacement en pixels entre les sources dans l'image assemblée (<code>0</code> à <code>1000</code>).</td></tr>
+    <tr><td><code>/folder</code>, <code>/name</code></td><td>string</td><td>Dossier d'enregistrement et nom de base de la prise.</td></tr>
+    <tr><td><code>/performance</code></td><td>int</td><td><code>1</code> limite l'aperçu à 10 i/s pendant l'enregistrement ; <code>0</code> dessine chaque image. S'applique immédiatement.</td></tr>
+  </table>
+
+  <h3>Adresses d'état (lecture seule via OSCQuery)</h3>
+  <table>
+    <tr><th>Adresse</th><th>Type</th><th>Description</th></tr>
+    <tr><td><code>/status/version</code></td><td>string</td><td>Version de l'application (ex. <code>0.9</code>, ou <code>dev</code> hors du paquet).</td></tr>
+    <tr><td><code>/status/state</code></td><td>string</td><td><code>idle</code>, <code>recording</code> ou <code>finishing</code>.</td></tr>
+    <tr><td><code>/status/elapsed</code></td><td>float</td><td>Durée enregistrée en secondes.</td></tr>
+    <tr><td><code>/status/dropped</code></td><td>int</td><td>Nombre total d'images perdues par les encodeurs.</td></tr>
+    <tr><td><code>/status/error</code></td><td>string</td><td>Dernière erreur (message OSC refusé, démarrage impossible…).</td></tr>
+    <tr><td><code>/status/failure</code></td><td>string</td><td>Raison de l'arrêt si la dernière prise a échoué.</td></tr>
+    <tr><td><code>/status/ndi</code></td><td>int</td><td><code>1</code> si la bibliothèque NDI est chargée, <code>0</code> sinon.</td></tr>
+    <tr><td><code>/status/ndi/sources</code></td><td>string</td><td>Titres des sources NDI disponibles (un par ligne).</td></tr>
+    <tr><td><code>/status/source/N/kind</code></td><td>string</td><td><code>syphon</code> ou <code>ndi</code> pour la source en place <code>N</code>.</td></tr>
+    <tr><td><code>/status/source/N/online</code></td><td>int</td><td><code>1</code> si la source en place <code>N</code> livre des images.</td></tr>
+    <tr><td><code>/status/source/N/width</code>, <code>/height</code>, <code>/fps</code></td><td>int, float</td><td>Dimensions et cadence reçues de la source <code>N</code>.</td></tr>
+    <tr><td><code>/status/source/N/file</code>, <code>/frames</code>, <code>/dropped</code></td><td>string, int</td><td>Fichier, images écrites et images perdues pour la source <code>N</code>.</td></tr>
+    <tr><td><code>/status/source/N/sound</code>, <code>/soundwritten</code></td><td>int, float</td><td><code>1</code> si la source envoie du son ; secondes de son écrites dans son film.</td></tr>
+    <tr><td><code>/status/assembled/width</code>, <code>/height</code></td><td>int</td><td>Taille de l'image assemblée actuelle ou de la prise en cours.</td></tr>
+    <tr><td><code>/status/assembled/file</code>, <code>/frames</code>, <code>/dropped</code></td><td>string, int</td><td>Fichier, images écrites et perdues du film assemblé.</td></tr>
+    <tr><td><code>/status/sound/written</code>, <code>/leftout</code></td><td>float</td><td>Secondes de son écrites dans le film assemblé, et secondes de son abandonnées.</td></tr>
+  </table>
+</section>
+
+<section id="mcp" data-group="Pilotage">
+  <h2>Serveur MCP</h2>
+  <p>L'exécutable <code>simple-recorder-mcp</code> est inclus dans le paquet de l'application (<code>/Applications/Simple Recorder.app/Contents/MacOS/simple-recorder-mcp</code>). Ce serveur MCP (stdio) permet à un agent comme Claude Code de lire l'état via OSCQuery et de piloter l'enregistreur en OSC pendant que l'application tourne.</p>
+  <table>
+    <tr><th>Outil MCP</th><th>Rôle</th></tr>
+    <tr><td><code>recorder_status</code></td><td>Renvoie la version, l'état (<code>idle</code>, <code>recording</code>, <code>finishing</code>), les sources choisies et disponibles (<code>syphon</code> / <code>ndi</code>), les réglages (dont <code>sound</code> et <code>performance</code>), les films écrits et les erreurs éventuelles.</td></tr>
+    <tr><td><code>recorder_configure</code></td><td>Modifie un ou plusieurs réglages : <code>sources</code>, <code>source</code>, <code>codec</code>, <code>fps</code>, <code>bitrate</code>, <code>folder</code>, <code>name</code>, <code>output</code>, <code>layout</code>, <code>gap</code>, <code>width</code>, <code>height</code>, <code>sound</code> (<code>"computer"</code>, titre d'une source ou <code>""</code>), <code>performance</code>.</td></tr>
+    <tr><td><code>recorder_start</code></td><td>Accepte les mêmes paramètres optionnels que <code>recorder_configure</code>, lance la prise et rend la main dès que l'enregistrement a démarré.</td></tr>
+    <tr><td><code>recorder_stop</code></td><td>Arrête la prise, attend que tous les fichiers <code>.mov</code> soient finalisés et renvoie leurs chemins.</td></tr>
+  </table>
+</section>
+
+<!-- ─────────────────────────────── Référence ─────────────────────────────── -->
+<section id="raccourcis" data-group="Référence">
+  <h2>Raccourcis clavier</h2>
+  <table>
+    <tr><th>Raccourci</th><th>Action</th></tr>
+    <tr><td><kbd>⌘</kbd><kbd>R</kbd></td><td>Démarrer ou arrêter l'enregistrement (<span class="ui">File › Start / Stop Recording</span>)</td></tr>
+    <tr><td><kbd>⌘</kbd><kbd>?</kbd></td><td>Ouvrir cette aide (<span class="ui">Help › Simple Recorder Help</span>)</td></tr>
+    <tr><td><kbd>⌘</kbd><kbd>F</kbd></td><td>Rechercher dans l'aide (lorsque la fenêtre d'aide est active)</td></tr>
+    <tr><td><kbd>⌘</kbd><kbd>Q</kbd></td><td>Quitter Simple Recorder (si un enregistrement est en cours, finalise proprement les films avant de quitter)</td></tr>
+  </table>
+</section>
+
+<section id="depannage" data-group="Référence">
+  <h2>Dépannage</h2>
+  <h3>Un message OSC ne déclenche rien</h3>
+  <ul>
+    <li>Tout message OSC refusé (adresse inconnue, argument invalide, modification des sources pendant une prise) s'affiche en orange pendant quelques secondes dans la barre du haut et dans le titre de la fenêtre (<code>⚠ …</code>), ainsi que dans <code>/status/error</code>.</li>
+    <li>Dans OSCScore, sur une piste de flags, écris les arguments entre chevrons dans le texte du flag (ex. <code>/record &lt;1&gt;</code> et <code>/record &lt;0&gt;</code>) : envoyer l'adresse littérale <code>/record &lt;0&gt;</code> sans argument est refusé et signalé.</li>
+  </ul>
+  <h3>« NDI off » dans la barre d'état</h3>
+  <p>Laissez le pointeur sur <span class="ui">NDI off</span> en bas de la fenêtre pour voir la raison exacte. Assurez-vous que le runtime NDI ou le SDK NDI (<code>/Library/NDI SDK for Apple/lib/macOS/libndi.dylib</code>) est installé, et que Simple Recorder est autorisé dans <span class="ui">Réglages Système › Confidentialité et sécurité › Réseau local</span>.</p>
+  <h3>Pas de son dans le film avec « Computer »</h3>
+  <ul>
+    <li>Vérifiez que Simple Recorder est autorisé dans <span class="ui">Réglages Système › Confidentialité et sécurité › Enregistrement de l'audio du système uniquement</span>.</li>
+    <li>Si aucun son n'a été joué sur le Mac pendant toute la prise, aucun échantillon non nul n'arrive et le film reste volontairement sans piste audio.</li>
+  </ul>
+  <h3>Des images sont perdues (Dropped)</h3>
+  <p>Activez <span class="ui">Performance mode</span> dans la colonne de droite pour limiter l'aperçu à 10 i/s pendant l'enregistrement. Si vous enregistrez de nombreuses sources en HEVC avec une image assemblée très grande (au-delà de la 4K), fixez <span class="ui">Assembled › Size</span> sur <span class="ui">3840 × 2160</span> ou <span class="ui">1920 × 1080</span>, plafonnez <span class="ui">Frame rate</span> à 60, ou choisissez <span class="ui">H.264</span> / <span class="ui">ProRes 422</span>.</p>
+  <h3>Lancer une seconde instance</h3>
+  <p>Par défaut, Simple Recorder prend le premier port libre à partir de <code>9230</code> (OSC) et <code>9231</code> (OSCQuery). Vous pouvez aussi fixer les ports via l'environnement : <code>SIMPLE_OSC_PORT=9240 SIMPLE_OSCQUERY_PORT=9241</code>.</p>
+</section>
+
+<p id="noresult">Rien ne correspond à cette recherche.</p>
+</main>
+
+<script>
+const sections = [...document.querySelectorAll("main section")];
+const toc = document.getElementById("toc");
+let group = null;
+for (const s of sections) {
+  if (s.dataset.group !== group) { group = s.dataset.group; toc.insertAdjacentHTML("beforeend", `<div class="group">${group}</div>`); }
+  toc.insertAdjacentHTML("beforeend", `<a class="item" href="#${s.id}" data-id="${s.id}">${s.querySelector("h2").textContent}</a>`);
+}
+const links = [...toc.querySelectorAll("a.item")];
+const original = new Map(sections.map((s) => [s, s.innerHTML]));
+const search = document.getElementById("search");
+search.addEventListener("input", () => {
+  const q = search.value.trim().toLowerCase();
+  let shown = 0;
+  for (const s of sections) {
+    s.innerHTML = original.get(s);
+    const hit = !q || s.textContent.toLowerCase().includes(q);
+    s.classList.toggle("hidden", !hit);
+    toc.querySelector(`[data-id="${s.id}"]`).classList.toggle("hidden", !hit);
+    if (hit) shown++;
+    if (hit && q.length > 1) highlight(s, q);
+  }
+  document.getElementById("noresult").style.display = shown ? "none" : "block";
+  document.querySelectorAll("nav .group").forEach((g) => {
+    let el = g.nextElementSibling, any = false;
+    while (el && !el.classList.contains("group")) { if (!el.classList.contains("hidden")) any = true; el = el.nextElementSibling; }
+    g.style.display = any ? "" : "none";
+  });
+});
+function highlight(root, q) {
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  const hits = [];
+  while (walker.nextNode()) { const n = walker.currentNode; if (n.nodeValue.toLowerCase().includes(q) && !n.parentElement.closest("kbd")) hits.push(n); }
+  for (const n of hits) {
+    const i = n.nodeValue.toLowerCase().indexOf(q);
+    const mark = document.createElement("mark");
+    const after = n.splitText(i); after.splitText(q.length);
+    mark.textContent = after.nodeValue; after.replaceWith(mark);
+  }
+}
+const observer = new IntersectionObserver((entries) => {
+  for (const e of entries) if (e.isIntersecting) links.forEach((a) => a.classList.toggle("on", a.dataset.id === e.target.id));
+}, { rootMargin: "-10% 0px -75% 0px" });
+sections.forEach((s) => observer.observe(s));
+document.addEventListener("keydown", (e) => { if ((e.metaKey || e.ctrlKey) && e.key === "f") { e.preventDefault(); search.focus(); search.select(); } });
+const v = new URLSearchParams(location.search).get("v"); if (v) document.getElementById("version").textContent = v;
+</script>
+</body>
+</html>

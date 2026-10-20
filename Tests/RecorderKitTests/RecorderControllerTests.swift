@@ -1043,7 +1043,7 @@ final class RecorderControllerTests: XCTestCase {
     func testTheVersionIsTheBundlesOrDev() {
         // Under swift test the main bundle is xctest's, which is no application
         XCTAssertEqual(controller.version, "dev")
-        XCTAssertEqual(RecorderController.bundleVersion(atPath: "/Applications/Simple Recorder.app", info: ["CFBundleShortVersionString": "1.0.0"]), "1.0.0")
+        XCTAssertEqual(RecorderController.bundleVersion(atPath: "/Applications/Simple Recorder.app", info: ["CFBundleShortVersionString": "0.9"]), "0.9")
         XCTAssertEqual(RecorderController.bundleVersion(atPath: "/Applications/Simple Recorder.app", info: ["CFBundleShortVersionString": "@VERSION@"]), "dev")
         XCTAssertEqual(RecorderController.bundleVersion(atPath: "/Applications/Simple Recorder.app", info: [:]), "dev")
         XCTAssertEqual(RecorderController.bundleVersion(atPath: "/Applications/Simple Recorder.app", info: nil), "dev")

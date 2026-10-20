@@ -50,7 +50,12 @@ struct StatusBar: View {
             }
             Text(summary)
             Text(model.version == "dev" ? "dev" : "v\(model.version)")
-                .help("The version of Simple Recorder")
+                .help("About Simple Recorder")
+                .onTapGesture {
+                    AboutWindowController.shared.show(model: model) {
+                        HelpWindowController.shared.show(version: model.version)
+                    }
+                }
         }
         .font(Theme.mono(10))
         .foregroundStyle(Theme.textFaint)

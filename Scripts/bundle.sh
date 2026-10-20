@@ -12,7 +12,7 @@ set -e
 cd "$(dirname "$0")/.."
 # The version shown by the Finder, About and /status/version: bump it here, and only here (CHANGELOG.md says what
 # changed; a release is tagged vX.Y.Z). The build number counts commits.
-VERSION="1.1.0"
+VERSION="0.9"
 BUILD="$(git rev-list --count HEAD 2>/dev/null || echo 1)"
 
 Scripts/syphon.sh
@@ -31,6 +31,7 @@ if grep -q '@VERSION@\|@BUILD@' "$APP/Contents/Info.plist"; then
     exit 1
 fi
 cp Resources/icon.icns "$APP/Contents/Resources/"
+cp -R Resources/Help "$APP/Contents/Resources/Help"
 cp "$PRODUCTS/SimpleRecorder" "$APP/Contents/MacOS/Simple Recorder"
 cp "$PRODUCTS/simple-recorder-mcp" "$APP/Contents/MacOS/"
 ditto build/Syphon.xcframework/macos-arm64_x86_64/Syphon.framework "$APP/Contents/Frameworks/Syphon.framework"

@@ -259,4 +259,31 @@ final class ViewRenderingTests: XCTestCase {
         let deadline = Date().addingTimeInterval(10)
         while model.isRecording && Date() < deadline { spin(0.02) }
     }
+
+    func testTheAboutViewAndHelpGuide() throws {
+        XCTAssertTrue(recorder.controller.startNetwork(withOSCPort: 19632, queryPort: 19633, name: "Render Test"))
+        recorder.controller.ndiAvailable = true
+        spin(0.1)
+        let host = NSHostingView(rootView: AboutView(model: model, openHelp: {}, close: {}))
+        host.frame = NSRect(origin: .zero, size: NSSize(width: 580, height: 400))
+        let window = NSWindow(contentRect: host.frame, styleMask: [.titled, .closable], backing: .buffered, defer: false)
+        window.appearance = NSAppearance(named: .darkAqua)
+        window.contentView = host
+        host.layoutSubtreeIfNeeded()
+        spin(0.2)
+        let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+        host.cacheDisplay(in: host.bounds, to: bitmap)
+
+        let folder = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("build/views")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        try XCTUnwrap(bitmap.representation(using: .png, properties: [:])).write(to: folder.appendingPathComponent("13-about.png"))
+        XCTAssertGreaterThan(colours(bitmap), 8)
+
+        let helpPage = HelpWindowController.root.appendingPathComponent("index.html")
+        let html = try String(contentsOf: helpPage, encoding: .utf8)
+        for section in ["premiers-pas", "fenetre", "dispositions", "sources", "son", "osc", "mcp", "raccourcis", "depannage"] {
+            XCTAssertTrue(html.contains("id=\"\(section)\""), "Help guide missing section \(section)")
+        }
+    }
 }
