@@ -1,18 +1,18 @@
 #!/bin/sh
-# Builds Simple Recorder and Simple Server for release into build/, and signs them.
+# Builds SimpleRecorder and Simple Server for release into build/, and signs them.
 #
-#   Scripts/bundle.sh             build/Simple Recorder.app and build/Simple Server.app
+#   Scripts/bundle.sh             build/SimpleRecorder.app and build/Simple Server.app
 #   INSTALL=1 Scripts/bundle.sh   also copies them to /Applications
 #   SIGN_IDENTITY="Developer ID Application: …" Scripts/bundle.sh   signs with that identity ("-" for ad hoc)
 #   NDI_LIBRARY=<path to libndi.dylib> Scripts/bundle.sh   puts that NDI library in the app (default: the NDI SDK's)
 #
-# Simple Recorder is a SwiftPM executable (the SwiftUI app in App/, the core in Recorder/), put in a bundle here
+# SimpleRecorder is a SwiftPM executable (the SwiftUI app in App/, the core in Recorder/), put in a bundle here
 # with Syphon's framework and the MCP tool. Simple Server is built from its Xcode project.
 set -e
 cd "$(dirname "$0")/.."
 # The version shown by the Finder, About and /status/version: bump it here, and only here (CHANGELOG.md says what
 # changed; a release is tagged vX.Y.Z). The build number counts commits.
-VERSION="0.9"
+VERSION="0.9.1"
 BUILD="$(git rev-list --count HEAD 2>/dev/null || echo 1)"
 
 Scripts/syphon.sh
@@ -20,7 +20,7 @@ swift build -c release --arch arm64 --arch x86_64 --product SimpleRecorder
 swift build -c release --arch arm64 --arch x86_64 --product simple-recorder-mcp
 PRODUCTS=".build/apple/Products/Release"
 
-APP="build/Simple Recorder.app"
+APP="build/SimpleRecorder.app"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Frameworks" "$APP/Contents/Resources"
 cp Resources/Info.plist "$APP/Contents/Info.plist"
@@ -32,11 +32,11 @@ if grep -q '@VERSION@\|@BUILD@' "$APP/Contents/Info.plist"; then
 fi
 cp Resources/icon.icns "$APP/Contents/Resources/"
 cp -R Resources/Help "$APP/Contents/Resources/Help"
-cp "$PRODUCTS/SimpleRecorder" "$APP/Contents/MacOS/Simple Recorder"
+cp "$PRODUCTS/SimpleRecorder" "$APP/Contents/MacOS/SimpleRecorder"
 cp "$PRODUCTS/simple-recorder-mcp" "$APP/Contents/MacOS/"
 ditto build/Syphon.xcframework/macos-arm64_x86_64/Syphon.framework "$APP/Contents/Frameworks/Syphon.framework"
 # SwiftPM looks for Syphon beside the executable: in a bundle it is in Frameworks
-install_name_tool -add_rpath "@executable_path/../Frameworks" "$APP/Contents/MacOS/Simple Recorder"
+install_name_tool -add_rpath "@executable_path/../Frameworks" "$APP/Contents/MacOS/SimpleRecorder"
 
 # NDI's library goes in the app when we have it; without it the app works, and does not list NDI sources
 NDI_LIBRARY="${NDI_LIBRARY:-/Library/NDI SDK for Apple/lib/macOS/libndi.dylib}"
@@ -80,7 +80,7 @@ codesign --verify --deep --strict "$APP"
 echo "signed: $SIGN_IDENTITY" >&2
 
 if [ "${INSTALL:-0}" = "1" ]; then
-    for NAME in "Simple Recorder" "Simple Server"; do
+    for NAME in "SimpleRecorder" "Simple Server"; do
         rm -rf "/Applications/$NAME.app"
         ditto "build/$NAME.app" "/Applications/$NAME.app"
     done

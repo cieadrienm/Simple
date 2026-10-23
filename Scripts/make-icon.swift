@@ -1,7 +1,7 @@
-// Draws the Simple Recorder app icon and writes Resources/icon.icns.  Usage: swift Scripts/make-icon.swift
+// Draws the SimpleRecorder app icon and writes Resources/icon.icns.  Usage: swift Scripts/make-icon.swift
 //
 // In the spirit of OSCScore's: the same dark tile, the same two colours. Where OSCScore shows a curve and its
-// playhead, this shows what Simple Recorder does: several pictures assembled into one, and the record light.
+// playhead, this shows what SimpleRecorder does: several pictures assembled into one, and the record light.
 import AppKit
 
 func color(_ hex: Int, _ alpha: CGFloat = 1) -> CGColor {

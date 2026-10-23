@@ -33,7 +33,7 @@ final class SettingsMigrationTests: XCTestCase {
         XCTAssertEqual(new.string(forKey: "RecorderName"), "Depth")
         XCTAssertNil(new.persistentDomain(forName: newName)?["NSWindow Frame MainWindow"], "only the recorder's settings are copied")
 
-        // Changed since in Simple Recorder: Simple Client's settings must not come back
+        // Changed since in SimpleRecorder: Simple Client's settings must not come back
         new.set("prores422", forKey: "RecorderCodec")
         old.set("h264", forKey: "RecorderCodec")
         SettingsMigration.migrate(from: oldName, to: new, domain: newName)
@@ -42,7 +42,7 @@ final class SettingsMigrationTests: XCTestCase {
 
     func testDefaultsTheRecorderRegistersAreNotSettings() {
         // What any recorder in this process registers is answered by every UserDefaults: it must not be taken for
-        // a setting made in Simple Recorder, nor copied as one made in Simple Client
+        // a setting made in SimpleRecorder, nor copied as one made in Simple Client
         new.register(defaults: ["RecorderCodec": "h264", "RecorderName": ""])
         old.set("Depth", forKey: "RecorderName")
         SettingsMigration.migrate(from: oldName, to: new, domain: newName)

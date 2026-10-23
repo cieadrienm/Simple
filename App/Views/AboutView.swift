@@ -30,7 +30,7 @@
 import AppKit
 import SwiftUI
 
-/// Simple Recorder ▸ About Simple Recorder: a dark window in the palette of the app and OSCScore.
+/// SimpleRecorder ▸ About SimpleRecorder: a dark window in the palette of the app and OSCScore.
 @MainActor
 final class AboutWindowController {
     static let shared = AboutWindowController()
@@ -320,7 +320,7 @@ struct AboutView: View {
     }
 }
 
-/// Draws the Simple Recorder icon (the Focus layout tiles in cyan and the red record light on a dark rounded tile),
+/// Draws the SimpleRecorder icon (the Focus layout tiles in cyan and the red record light on a dark rounded tile),
 /// identical to `Scripts/make-icon.swift`, so the About window always displays the crisp icon even outside the `.app`.
 struct SimpleRecorderIconView: View {
     let size: CGFloat

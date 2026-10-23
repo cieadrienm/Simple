@@ -30,7 +30,7 @@
 import AppKit
 import WebKit
 
-/// Help ▸ Simple Recorder Help: the bundled HTML guide (`Resources/Help`) in a window of its own.
+/// Help ▸ SimpleRecorder Help: the bundled HTML guide (`Resources/Help`) in a window of its own.
 @MainActor
 final class HelpWindowController: NSObject, WKNavigationDelegate {
     static let shared = HelpWindowController()

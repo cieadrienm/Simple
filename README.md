@@ -1,7 +1,7 @@
-Simple Recorder
-===============
+SimpleRecorder
+==============
 
-Simple Recorder records several [Syphon](https://github.com/Syphon/Syphon-Framework) and [NDI](https://ndi.video) sources at once: each to its own movie, all assembled in one movie (side by side, stacked, as a mosaic), or both, on one clock. It can be driven from its window, by OSC (described by OSCQuery) and by MCP.
+SimpleRecorder records several [Syphon](https://github.com/Syphon/Syphon-Framework) and [NDI](https://ndi.video) sources at once: each to its own movie, all assembled in one movie (side by side, stacked, as a mosaic), or both, on one clock. It can be driven from its window, by OSC (described by OSCQuery) and by MCP.
 
 It grew out of Syphon's Simple Client. **Simple Server**, its companion, is still here: it publishes an animated test pattern (a pulsing background, a bar which sweeps across the frame and a marker in the top left corner), and `-ServerName A` gives it a name, so that several can run and be told apart.
 
@@ -13,7 +13,7 @@ The window
 - **Settings**, on the right: the codec, frame rate, bitrate and sound (*Sound*: *None*, *Computer* for the sound played on this Mac, or one of the sources chosen) of the movies; the size of the assembled picture and the gap between its sources; the folder and the name; and *Performance mode* (under "Display"): while recording, the picture is shown ten times a second instead of at every frame, to leave the GPU to the encoders on a loaded machine. It applies at once, also during a recording, and changes nothing in the movies; when not recording the picture is as smooth as ever.
 - **The take**, on top: the record button (⌘R), which stays pressed and shows a stop square while recording, whatever started the recording; the time; frames written and dropped; and what a recording writes: *Separate*, *Assembled* or *Both*.
 - **The state**, at the bottom: the OSC and OSCQuery ports, whether NDI is available ("NDI on" or "NDI off"), the space left, how many movies a recording writes, why the last recording ended if it failed, and the version ("v0.9", or "dev" when not run from the app; clicking it opens the About window).
-- **Help** (`Help ▸ Simple Recorder Help`, ⌘?): a searchable HTML guide in a window of its own (`Resources/Help/index.html`).
+- **Help** (`Help ▸ SimpleRecorder Help`, ⌘?): a searchable HTML guide in a window of its own (`Resources/Help/index.html`).
 
 Recording
 ---------
@@ -40,7 +40,7 @@ With a size given, the whole picture is fitted into it, without distortion. One 
 - **Codec**: H.264, HEVC, ProRes 422 or ProRes 4444 (which keeps transparency).
 - **Frame rate**: every frame of the sources, or a maximum. Above the maximum, frames in excess are discarded and those kept are evenly timed.
 - **Bitrate**: megabits per second for H.264 and HEVC, or automatic. ProRes has none to choose.
-- **Names**: `<name>.mov` for the assembled movie, `<name> — <source>.mov` for each source's; a single source recorded alone, not assembled, is `<name>.mov`. An empty name is `Simple Recorder` and the date. An existing movie is never overwritten: a number is added, the same for every movie of the recording.
+- **Names**: `<name>.mov` for the assembled movie, `<name> — <source>.mov` for each source's; a single source recorded alone, not assembled, is `<name>.mov`. An empty name is `SimpleRecorder` and the date. An existing movie is never overwritten: a number is added, the same for every movie of the recording.
 
 Frames are encoded on the GPU, away from the main thread. If an encoder cannot keep up frames are dropped, and counted, rather than delaying anything. Quitting, closing the window or `kill` while recording finishes the movies first. If writing one movie fails (a full disk, for instance) the others go on, the reason stays in the window for as long as the recording does and until the next one, and what was written is kept. The sources cannot be changed while recording.
 
@@ -49,7 +49,7 @@ NDI sources
 
 NDI sources are listed beside the Syphon servers, tagged "NDI", and are recorded in the same way: a movie each, assembled, or both. NDI pictures are received as BGRA at full quality and are not flipped; a source without alpha is recorded opaque. Their sound is recorded too (see Sound, below).
 
-NDI needs its library, `libndi.dylib`, which Simple Recorder loads at run time. `Scripts/bundle.sh` copies it into the app when the NDI SDK is installed (`/Library/NDI SDK for Apple`); otherwise the app looks for the NDI runtime (`$NDI_RUNTIME_DIR_V6`, then `/usr/local/lib`), then for the SDK's own copy (`/Library/NDI SDK for Apple/lib/macOS/libndi.dylib`), and only when none is found runs with "NDI off": the Syphon sources work as before and nothing is reported as an error. `SIMPLE_NDI_LIBRARY` in the environment chooses a library (an empty value counts as unset; a path to nothing runs with NDI off). If a Syphon server and an NDI source have the same title, the Syphon one is taken. Finding NDI sources on the network needs the Local Network permission, which macOS asks the app for.
+NDI needs its library, `libndi.dylib`, which SimpleRecorder loads at run time. `Scripts/bundle.sh` copies it into the app when the NDI SDK is installed (`/Library/NDI SDK for Apple`); otherwise the app looks for the NDI runtime (`$NDI_RUNTIME_DIR_V6`, then `/usr/local/lib`), then for the SDK's own copy (`/Library/NDI SDK for Apple/lib/macOS/libndi.dylib`), and only when none is found runs with "NDI off": the Syphon sources work as before and nothing is reported as an error. `SIMPLE_NDI_LIBRARY` in the environment chooses a library (an empty value counts as unset; a path to nothing runs with NDI off). If a Syphon server and an NDI source have the same title, the Syphon one is taken. Finding NDI sources on the network needs the Local Network permission, which macOS asks the app for.
 
 NDI® is a registered trademark of Vizrt NDI AB.
 
@@ -71,7 +71,7 @@ A movie which receives no sound has no sound track, exactly as before.
 OSC and OSCQuery
 ----------------
 
-Simple Recorder listens for OSC on UDP port **9230** and describes its parameters to OSCQuery clients on HTTP port **9231**, announced by Bonjour (`_oscjson._tcp`). If a port is taken the next free one is used; the window's bottom bar shows the ports in use. `SIMPLE_OSC_PORT` and `SIMPLE_OSCQUERY_PORT` in the environment choose other ports, to run a second copy.
+SimpleRecorder listens for OSC on UDP port **9230** and describes its parameters to OSCQuery clients on HTTP port **9231**, announced by Bonjour (`_oscjson._tcp`). If a port is taken the next free one is used; the window's bottom bar shows the ports in use. `SIMPLE_OSC_PORT` and `SIMPLE_OSCQUERY_PORT` in the environment choose other ports, to run a second copy.
 
 | Address | Type | | |
 |---|---|---|---|
@@ -89,7 +89,7 @@ Simple Recorder listens for OSC on UDP port **9230** and describes its parameter
 | `/width`, `/height` | int | read, write | The size the assembled picture is fitted into; 0 for the size the sources need |
 | `/sound` | string | read, write | What sound is recorded: `computer` for the sound played on this Mac, the title (or part of it) of one of the sources chosen for the assembled movie, or empty for none (the default). OSCQuery lists the titles and `computer` as its `RANGE`. |
 | `/performance` | int | read, write | 1: while recording, the picture in the window is drawn ten times a second, and composed only that often when no assembled movie needs it at every frame, to leave the GPU to the movies; 0 (the default): every frame. Any number but 0 counts as 1. It applies at once. |
-| `/status/version` | string | read | The version of Simple Recorder, as `0.9`; `dev` when it is not run from its application |
+| `/status/version` | string | read | The version of SimpleRecorder, as `0.9`; `dev` when it is not run from its application |
 | `/status/state` | string | read | `idle`, `recording`, or `finishing` while the movies are completed |
 | `/status/elapsed` | float | read | Seconds recorded |
 | `/status/dropped` | int | read | Frames lost in all the movies because an encoder could not keep up |
@@ -111,7 +111,7 @@ Simple Recorder listens for OSC on UDP port **9230** and describes its parameter
 
 A source's own movie is always the size of the source: `/width` and `/height` concern the assembled picture only. `/output`, `/layout`, `/gap`, `/width`, `/height` and `/sound` can be set while recording; they apply to the next recording. `/performance` can be set while recording too, and applies at once.
 
-OSC has no passwords: any machine which can reach Simple Recorder's port can start and stop recordings and change where they are written. Use it on a network you trust.
+OSC has no passwords: any machine which can reach SimpleRecorder's port can start and stop recordings and change where they are written. Use it on a network you trust.
 
 Numbers are accepted as int or float. Settings are saved, and apply to the next recording. A message which cannot be applied (a wrong argument, an address which does not exist, a source changed while recording) is reported in `/status/error` and, for a few seconds, beside the time in the window.
 
@@ -125,14 +125,14 @@ Numbers are accepted as int or float. Settings are saved, and apply to the next 
 MCP
 ---
 
-`simple-recorder-mcp` is inside the app (`Contents/MacOS`). It is a stdio MCP server which reads the recorder through OSCQuery and writes with OSC, so the app must be running. `.mcp.json` declares it for Claude Code, from `build/Simple Recorder.app`.
+`simple-recorder-mcp` is inside the app (`Contents/MacOS`). It is a stdio MCP server which reads the recorder through OSCQuery and writes with OSC, so the app must be running. `.mcp.json` declares it for Claude Code, from `build/SimpleRecorder.app`.
 
 - `recorder_status`: the `version` of the app, the sources chosen, each with its `kind` (`syphon` or `ndi`) and what it delivers and writes (`sound`: whether it sends sound; `soundWritten`: seconds of sound in its movie), `ndi` (whether NDI's library is loaded), the sources available as a list of `{title, kind}` (a list of plain titles before NDI: its shape changed), settings (`sound`: `computer`, the source whose sound the assembled movie takes, or empty; `performance`: whether the window's picture is held back while recording), the assembled picture and its movie (`assembled`, with `soundWritten`, seconds of sound in it), `soundLeftOut`, state, errors
 - `recorder_configure {sources, source, codec, fps, bitrate, folder, name, output, layout, gap, width, height, sound, performance}`: changes what is given; `sources` is a list of titles, in order, of Syphon servers or NDI sources; `sound` is `"computer"` for the sound played on this Mac, the title (or part of it) of the source among them whose sound the assembled movie takes, or empty for none; `performance` (true or false) holds the window's picture back to ten a second while recording, and applies at once
 - `recorder_start`: accepts the same; returns once recording, or fails with the reason
 - `recorder_stop`: returns once the movies are finished, with their paths
 
-    Tools/mcp-call.py "build/Simple Recorder.app/Contents/MacOS/simple-recorder-mcp" recorder_status
+    Tools/mcp-call.py "build/SimpleRecorder.app/Contents/MacOS/simple-recorder-mcp" recorder_status
 
 Building
 --------
@@ -141,7 +141,7 @@ Requires Xcode 16 or later. The apps run on macOS 14 or later, on Apple silicon 
 
     Scripts/bundle.sh
 
-builds `build/Simple Recorder.app` and `build/Simple Server.app` for release and signs them (`INSTALL=1` also copies them to `/Applications`). It signs with your Developer ID or Apple Development identity if you have one, so that macOS remembers the Local Network permission the app is given; otherwise it asks again after each build.
+builds `build/SimpleRecorder.app` and `build/Simple Server.app` for release and signs them (`INSTALL=1` also copies them to `/Applications`). It signs with your Developer ID or Apple Development identity if you have one, so that macOS remembers the Local Network permission the app is given; otherwise it asks again after each build.
 
 Versions
 --------
@@ -150,7 +150,7 @@ The version is `VERSION` at the top of `Scripts/bundle.sh`, and only there; the 
 
 The app's icon is drawn by `swift Scripts/make-icon.swift`, which writes `Resources/icon.icns`.
 
-Simple Recorder is a SwiftPM package: the window in `App/` (SwiftUI), the recording core in `Recorder/` (Objective-C, independent of Syphon), the MCP server in `MCP/`. Syphon's framework is a submodule, given to SwiftPM as an xcframework which `Scripts/syphon.sh` builds — run it once before `swift build` (`Scripts/bundle.sh` does). Simple Server is built from `Simple.xcworkspace`.
+SimpleRecorder is a SwiftPM package: the window in `App/` (SwiftUI), the recording core in `Recorder/` (Objective-C, independent of Syphon), the MCP server in `MCP/`. Syphon's framework is a submodule, given to SwiftPM as an xcframework which `Scripts/syphon.sh` builds — run it once before `swift build` (`Scripts/bundle.sh` does). Simple Server is built from `Simple.xcworkspace`.
 
 Tests
 -----
@@ -176,7 +176,7 @@ Checking without looking at the screen
 Licence
 -------
 
-Simple Recorder, and everything added to this repository since it was forked from Syphon's Simple apps, is Copyright © 2026 Adrien Mondot, cie Adrien M. It is free software under the GNU General Public License, version 3 or (at your option) any later version: see [`LICENSE`](LICENSE).
+SimpleRecorder, and everything added to this repository since it was forked from Syphon's Simple apps, is Copyright © 2026 Adrien Mondot, cie Adrien M. It is free software under the GNU General Public License, version 3 or (at your option) any later version: see [`LICENSE`](LICENSE).
 
 The code of Syphon's original Simple Client and Simple Server is Copyright 2010-2011 bangnoise (Tom Butterworth) & vade (Anton Marini) and their contributors, and keeps its BSD licence, in [`License.txt`](License.txt). The NDI headers in `ThirdParty/NDI/include` keep their MIT notice (see `ThirdParty/NDI/README.md`).
 

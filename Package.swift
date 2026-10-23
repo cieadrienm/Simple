@@ -1,7 +1,7 @@
 // swift-tools-version: 5.9
 import PackageDescription
 
-// Simple Recorder: the recording core (Objective-C, no Syphon), the app (SwiftUI) and the MCP tool.
+// SimpleRecorder: the recording core (Objective-C, no Syphon), the app (SwiftUI) and the MCP tool.
 // Syphon comes as an xcframework built from the submodule: run Scripts/syphon.sh once before `swift build`.
 // Simple Server is built from Simple.xcworkspace.
 let package = Package(

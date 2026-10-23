@@ -50,7 +50,7 @@ struct StatusBar: View {
             }
             Text(summary)
             Text(model.version == "dev" ? "dev" : "v\(model.version)")
-                .help("About Simple Recorder")
+                .help("About SimpleRecorder")
                 .onTapGesture {
                     AboutWindowController.shared.show(model: model) {
                         HelpWindowController.shared.show(version: model.version)

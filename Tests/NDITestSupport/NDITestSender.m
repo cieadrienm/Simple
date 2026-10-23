@@ -316,7 +316,7 @@ static NSSize ReceiveOneFrame(const NDIlib_v5 *ndi, NDIlib_source_t source, NSDa
     create.color_format = NDIlib_recv_color_format_BGRX_BGRA;   // what was sent comes back
     create.bandwidth = NDIlib_recv_bandwidth_highest;
     create.allow_video_fields = false;
-    create.p_ndi_recv_name = "Simple Recorder test";
+    create.p_ndi_recv_name = "SimpleRecorder test";
     NDIlib_recv_instance_t receiver = ndi->recv_create_v3(&create);
     if (!receiver)
         return NSZeroSize;

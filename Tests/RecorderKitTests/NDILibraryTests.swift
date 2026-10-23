@@ -37,19 +37,19 @@ final class NDILibraryTests: XCTestCase {
     }
 
     func testTheEnvironmentChoosesTheLibrary() {
-        let bundle = "/Applications/Simple Recorder.app"
+        let bundle = "/Applications/SimpleRecorder.app"
         XCTAssertEqual(NDILibrary.candidatePaths(withEnvironment: ["SIMPLE_NDI_LIBRARY": "/somewhere/libndi.dylib",
                                                                    "NDI_RUNTIME_DIR_V6": "/runtime"],
                                                  bundlePath: bundle),
                        ["/somewhere/libndi.dylib"])
         XCTAssertEqual(NDILibrary.candidatePaths(withEnvironment: ["NDI_RUNTIME_DIR_V6": "/runtime"], bundlePath: bundle),
-                       ["/Applications/Simple Recorder.app/Contents/Frameworks/libndi.dylib",
+                       ["/Applications/SimpleRecorder.app/Contents/Frameworks/libndi.dylib",
                         "/runtime/libndi.dylib",
                         "/usr/local/lib/libndi.dylib",
                         "/Library/NDI SDK for Apple/lib/macOS/libndi.dylib"])
         // Without NDI's runtime variable, its place is left out rather than made "/libndi.dylib"
         XCTAssertEqual(NDILibrary.candidatePaths(withEnvironment: [:], bundlePath: bundle),
-                       ["/Applications/Simple Recorder.app/Contents/Frameworks/libndi.dylib",
+                       ["/Applications/SimpleRecorder.app/Contents/Frameworks/libndi.dylib",
                         "/usr/local/lib/libndi.dylib",
                         "/Library/NDI SDK for Apple/lib/macOS/libndi.dylib"])
     }

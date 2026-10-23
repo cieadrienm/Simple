@@ -34,7 +34,7 @@ import RecorderKit
 @main
 struct SimpleRecorderApp: App {
     /// The name of the app: in the window, in OSCQuery, in the names of movies
-    static let name = "Simple Recorder"
+    static let name = "SimpleRecorder"
 
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
 
@@ -99,8 +99,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     override init() {
         // Without Metal there is nothing to show nor to record
-        guard let device = MTLCreateSystemDefaultDevice() else { fatalError("Simple Recorder needs Metal") }
-        // Simple Recorder was Simple Client: its settings are taken over, once
+        guard let device = MTLCreateSystemDefaultDevice() else { fatalError("SimpleRecorder needs Metal") }
+        // SimpleRecorder was Simple Client: its settings are taken over, once
         SettingsMigration.migrate(from: SettingsMigration.oldDomain, to: .standard, domain: Bundle.main.bundleIdentifier ?? "net.am-cb.simple-recorder")
         // NDI works only if its library was found: a missing library is a state, not an error
         let ndi = NDILibrary.shared()

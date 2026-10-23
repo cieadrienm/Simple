@@ -29,7 +29,7 @@
 
 import Foundation
 
-/// Simple Recorder was Simple Client: the recorder's settings made there are taken over, once.
+/// SimpleRecorder was Simple Client: the recorder's settings made there are taken over, once.
 enum SettingsMigration {
     static let oldDomain = "net.am-cb.simple-client"
     private static let keys = ["RecorderCodec", "RecorderWidth", "RecorderHeight", "RecorderFPS", "RecorderBitrate", "RecorderFolder", "RecorderName"]

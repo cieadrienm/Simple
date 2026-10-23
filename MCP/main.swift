@@ -1,10 +1,10 @@
-// simple-recorder-mcp — Model Context Protocol server (stdio) for Simple Recorder.
+// simple-recorder-mcp — Model Context Protocol server (stdio) for SimpleRecorder.
 //
 // It reads the recorder through OSCQuery (HTTP) and writes to it with OSC (UDP), so it uses the very surface any
 // OSC controller does: there is no other API.
 import Foundation
 
-let applicationName = "Simple Recorder"
+let applicationName = "SimpleRecorder"
 let preferredPort = Int(ProcessInfo.processInfo.environment["SIMPLE_OSCQUERY_PORT"] ?? "") ?? 9231
 /// The app takes the first free port from the one it prefers, so it may be a few ports further
 let portsToTry = 16
@@ -367,7 +367,7 @@ let settingsProperties: [String: Any] = [
 
 let tools: [[String: Any]] = [
     ["name": "recorder_status",
-     "description": "The state of Simple Recorder: its version (version: as 0.9, or dev when it is not run from its application); the sources chosen for recording, in order, with each one's kind (syphon or ndi) and what it delivers (online, size, frame rate) and its movie "
+     "description": "The state of SimpleRecorder: its version (version: as 0.9, or dev when it is not run from its application); the sources chosen for recording, in order, with each one's kind (syphon or ndi) and what it delivers (online, size, frame rate) and its movie "
         + "(file, frames written and dropped, sound: true if the source is sending sound, which only NDI sources do, and soundWritten: seconds of sound in its movie); the sources which can be chosen (sourcesAvailable: a list of {title, kind}, kind being syphon or ndi; it was a list of titles before NDI sources came); whether NDI is usable (ndi: false when NDI's library is not installed, which only leaves NDI sources out); the settings, among them what a recording writes "
         + "(output: separate | assembled | both), what sound is recorded (sound: \"computer\", a source's title, or \"\"), how the sources are assembled (layout, gap, width, height) and whether the window's picture is held back while recording (performance); the assembled picture's size now and "
         + "the assembled movie (assembled: width, height, file, frames, dropped, soundWritten: seconds of sound in it); the seconds of sound left out in all the movies because an encoder could not keep up (soundLeftOut; pictures are never delayed for sound); whether it is recording "
@@ -427,7 +427,7 @@ while let line = readLine(strippingNewline: true) {
         result = ["protocolVersion": params["protocolVersion"] as? String ?? "2024-11-05",
                   "capabilities": ["tools": [:] as [String: Any]],
                   "serverInfo": ["name": "simple-recorder", "version": Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "dev"],
-                  "instructions": "Controls the Simple Recorder app, which records several Syphon and NDI sources at once: each to its own movie file, all assembled in one movie "
+                  "instructions": "Controls the SimpleRecorder app, which records several Syphon and NDI sources at once: each to its own movie file, all assembled in one movie "
                     + "(side by side, stacked, mosaic), or both. "
                     + "Call recorder_status first to see the sources and settings; recorder_configure chooses the sources; recorder_start and recorder_stop record."]
     case "ping": result = [:]

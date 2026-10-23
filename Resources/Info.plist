@@ -5,7 +5,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>en</string>
 	<key>CFBundleExecutable</key>
-	<string>Simple Recorder</string>
+	<string>SimpleRecorder</string>
 	<key>CFBundleIconFile</key>
 	<string>icon.icns</string>
 	<key>CFBundleIdentifier</key>
@@ -13,7 +13,7 @@
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
-	<string>Simple Recorder</string>
+	<string>SimpleRecorder</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
@@ -34,8 +34,8 @@
 		<string>_ndi._tcp</string>
 	</array>
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>Simple Recorder can be controlled over the network with OSC, and announces itself to OSCQuery applications. NDI sources are found on the network.</string>
+	<string>SimpleRecorder can be controlled over the network with OSC, and announces itself to OSCQuery applications. NDI sources are found on the network.</string>
 	<key>NSAudioCaptureUsageDescription</key>
-	<string>Simple Recorder records the sound played on this Mac when Sound is set to Computer.</string>
+	<string>SimpleRecorder records the sound played on this Mac when Sound is set to Computer.</string>
 </dict>
 </plist>

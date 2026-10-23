@@ -3,6 +3,12 @@ Changelog
 
 The version is `VERSION` in `Scripts/bundle.sh`; each release is tagged `vX.Y` in git.
 
+0.9.1 — 2026-10-24
+------------------
+
+- Simple Recorder becomes SimpleRecorder, like SimpleAudio and SimpleText: the app (`SimpleRecorder.app`), its menus, About window, Help and status bar, the default name of the movies (`SimpleRecorder <date>`), the NDI receiver and the computer sound tap. The bundle identifier stays `net.am-cb.simple-recorder`, so settings and permissions are kept.
+- Licensed under the GNU GPL, version 3 or later, with an additional permission for NDI's library; Syphon's original code keeps its BSD licence.
+
 0.9 — 2026-10-20
 ----------------
 

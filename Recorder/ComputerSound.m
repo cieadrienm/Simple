@@ -207,7 +207,7 @@
     if (@available(macOS 14.2, *))
     {
         CATapDescription *tapDescription = [[CATapDescription alloc] initStereoGlobalTapButExcludeProcesses:@[]];
-        tapDescription.name = @"Simple Recorder";
+        tapDescription.name = @"SimpleRecorder";
         tapDescription.UUID = [NSUUID UUID];
         tapDescription.privateTap = YES;
         tapDescription.muteBehavior = CATapUnmuted;
@@ -219,7 +219,7 @@
         }
 
         NSDictionary *description = @{
-            @kAudioAggregateDeviceNameKey: @"Simple Recorder",
+            @kAudioAggregateDeviceNameKey: @"SimpleRecorder",
             @kAudioAggregateDeviceUIDKey: [NSUUID UUID].UUIDString,
             @kAudioAggregateDeviceIsPrivateKey: @YES,
             @kAudioAggregateDeviceTapAutoStartKey: @NO,

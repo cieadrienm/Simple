@@ -1,7 +1,7 @@
 {
   "mcpServers": {
     "simple-recorder": {
-      "command": "build/Simple Recorder.app/Contents/MacOS/simple-recorder-mcp"
+      "command": "build/SimpleRecorder.app/Contents/MacOS/simple-recorder-mcp"
     }
   }
 }

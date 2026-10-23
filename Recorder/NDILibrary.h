@@ -31,7 +31,7 @@
 
 NS_ASSUME_NONNULL_BEGIN
 
-// NDI's library, loaded at run time: Simple Recorder works without it, and does not ship a copy it may not redistribute.
+// NDI's library, loaded at run time: SimpleRecorder works without it, and does not ship a copy it may not redistribute.
 // This header does not include the SDK's headers (NDILibrary+Functions.h does), so Swift never needs them.
 @interface NDILibrary : NSObject
 

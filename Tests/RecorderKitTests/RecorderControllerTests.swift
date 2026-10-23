@@ -614,7 +614,7 @@ final class RecorderControllerTests: XCTestCase {
         tickOne()
         XCTAssertTrue(controller.start())
         let file = URL(fileURLWithPath: controller.file).lastPathComponent
-        XCTAssertTrue(file.hasPrefix("Simple Recorder \(Calendar.current.component(.year, from: Date()))-"), file)
+        XCTAssertTrue(file.hasPrefix("SimpleRecorder \(Calendar.current.component(.year, from: Date()))-"), file)
         XCTAssertTrue(file.hasSuffix(".mov"), file)
         stopAndWait()
     }
@@ -1043,10 +1043,10 @@ final class RecorderControllerTests: XCTestCase {
     func testTheVersionIsTheBundlesOrDev() {
         // Under swift test the main bundle is xctest's, which is no application
         XCTAssertEqual(controller.version, "dev")
-        XCTAssertEqual(RecorderController.bundleVersion(atPath: "/Applications/Simple Recorder.app", info: ["CFBundleShortVersionString": "0.9"]), "0.9")
-        XCTAssertEqual(RecorderController.bundleVersion(atPath: "/Applications/Simple Recorder.app", info: ["CFBundleShortVersionString": "@VERSION@"]), "dev")
-        XCTAssertEqual(RecorderController.bundleVersion(atPath: "/Applications/Simple Recorder.app", info: [:]), "dev")
-        XCTAssertEqual(RecorderController.bundleVersion(atPath: "/Applications/Simple Recorder.app", info: nil), "dev")
+        XCTAssertEqual(RecorderController.bundleVersion(atPath: "/Applications/SimpleRecorder.app", info: ["CFBundleShortVersionString": "0.9"]), "0.9")
+        XCTAssertEqual(RecorderController.bundleVersion(atPath: "/Applications/SimpleRecorder.app", info: ["CFBundleShortVersionString": "@VERSION@"]), "dev")
+        XCTAssertEqual(RecorderController.bundleVersion(atPath: "/Applications/SimpleRecorder.app", info: [:]), "dev")
+        XCTAssertEqual(RecorderController.bundleVersion(atPath: "/Applications/SimpleRecorder.app", info: nil), "dev")
         XCTAssertEqual(RecorderController.bundleVersion(atPath: "/usr/bin", info: ["CFBundleShortVersionString": "16.0"]), "dev")
     }
 

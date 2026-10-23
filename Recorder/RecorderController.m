@@ -1383,7 +1383,7 @@ static Layout *MonitorLayout(Layout *layout, LayoutKind kind, NSArray *sizes, NS
         NSDateFormatter *formatter = [[NSDateFormatter alloc] init];
         formatter.locale = [NSLocale localeWithLocaleIdentifier:@"en_US_POSIX"];
         formatter.dateFormat = @"yyyy-MM-dd HH.mm.ss";
-        name = [NSString stringWithFormat:@"Simple Recorder %@", [formatter stringFromDate:[NSDate date]]];
+        name = [NSString stringWithFormat:@"SimpleRecorder %@", [formatter stringFromDate:[NSDate date]]];
     }
 
     BOOL computerSound = [self.sound isEqualToString:RecorderComputerSound];
@@ -1831,7 +1831,7 @@ static Layout *MonitorLayout(Layout *layout, LayoutKind kind, NSArray *sizes, NS
         [self stringParameter:@"/folder" summary:@"The folder movies are written to" key:@"folder"],
         [self stringParameter:@"/name" summary:@"The name of the recording, without extension: the assembled movie's. Empty for the app's name and the date. A source's own movie adds its source's title, unless it is the only movie."
                           key:@"name"],
-        [self statusParameter:@"/status/version" type:@"s" summary:@"The version of Simple Recorder, as 0.9; dev when it is not run from its application" key:@"version"],
+        [self statusParameter:@"/status/version" type:@"s" summary:@"The version of SimpleRecorder, as 0.9; dev when it is not run from its application" key:@"version"],
         [self statusParameter:@"/status/state" type:@"s" summary:@"idle, recording, or finishing while the movies are completed" key:@"state"],
         [self statusParameter:@"/status/elapsed" type:@"f" summary:@"Seconds recorded" key:@"elapsed"],
         [self statusParameter:@"/status/frames" type:@"i" summary:@"Frames written to the assembled movie or, if there is none, to the first source's" key:@"frames"],

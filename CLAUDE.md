@@ -1,6 +1,6 @@
-# Simple Recorder — notes pour les agents
+# SimpleRecorder — notes pour les agents
 
-Simple Recorder enregistre plusieurs sources Syphon et NDI à la fois — un film chacune, un film où elles sont assemblées, ou les
+SimpleRecorder enregistre plusieurs sources Syphon et NDI à la fois — un film chacune, un film où elles sont assemblées, ou les
 deux — sur une horloge commune, pilotable depuis
 sa fenêtre, en OSC (décrit par OSCQuery) et en MCP. Il vient du Simple Client de Syphon ; Simple Server, la source de test,
 est toujours là. Adrien (spectacle vivant, app eMotion) est l'unique utilisateur ; il parle français.
@@ -21,15 +21,15 @@ est toujours là. Adrien (spectacle vivant, app eMotion) est l'unique utilisateu
 ```
 Scripts/syphon.sh             # une fois : build/Syphon.xcframework, dont Package.swift a besoin
 swift test                    # tout sauf Simple Server, ~3 min 50 (357 tests) ; dessine aussi la fenêtre dans build/views/*.png
-Scripts/bundle.sh             # build/Simple Recorder.app (signée, MCP dedans) et build/Simple Server.app
+Scripts/bundle.sh             # build/SimpleRecorder.app (signée, MCP dedans) et build/Simple Server.app
 Tools/build.sh                # outils de vérification → build/tools
 ```
-Pas de projet Xcode pour Simple Recorder : c'est un paquet SwiftPM (`App/` en SwiftUI, `Recorder/` en Objective-C, `MCP/`).
+Pas de projet Xcode pour SimpleRecorder : c'est un paquet SwiftPM (`App/` en SwiftUI, `Recorder/` en Objective-C, `MCP/`).
 Simple Server se construit depuis `Simple.xcworkspace`.
 
 ## Règles qui ont coûté cher
 - **Ne jamais tuer les apps d'Adrien** (eMotion, OSCScore, AMKinectTrack tournent souvent). Lancer ses propres instances et
-  les tuer par PID. Pour tester : `SIMPLE_OSC_PORT=19230 SIMPLE_OSCQUERY_PORT=19231 "build/Simple Recorder.app/Contents/MacOS/Simple Recorder" -RecorderFolder <dossier>`,
+  les tuer par PID. Pour tester : `SIMPLE_OSC_PORT=19230 SIMPLE_OSCQUERY_PORT=19231 "build/SimpleRecorder.app/Contents/MacOS/SimpleRecorder" -RecorderFolder <dossier>`,
   avec des `Simple Server -ServerName A` (B, C…) comme sources ; pour NDI, `build/tools/ndi-send <nom> [largeur hauteur fps] [--bgrx]` (lancé par soi, tué par PID).
   Simple Server ne publie rien quand l'écran dort : sans écran allumé, prendre `ndi-send` ou un émetteur Syphon qui dessine sur un minuteur.
 - **Les réglages et les sources envoyés en OSC sont enregistrés dans les préférences d'Adrien** (`net.am-cb.simple-recorder`) :

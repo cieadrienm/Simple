@@ -8,6 +8,6 @@ final class SmokeTests: XCTestCase {
     func testTheAppTargetSeesTheCoreAndSyphon() {
         XCTAssertTrue(FramePacer(framesPerSecond: 30).decisionForFrame(atTime: 0).keep.boolValue)
         XCTAssertNotNil(SyphonServerDirectory.shared().servers)
-        XCTAssertEqual(SimpleRecorderApp.name, "Simple Recorder")
+        XCTAssertEqual(SimpleRecorderApp.name, "SimpleRecorder")
     }
 }
