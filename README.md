@@ -172,3 +172,14 @@ Checking without looking at the screen
 - `ndi-send <name> [width height fps] [--bgrx] [--tone [--rate hz] [--channels 1|2|4]]` is an NDI sender of Simple Server's test pattern (1280 × 720 at 30 by default), to try NDI sources; `--bgrx` sends frames without alpha. `--tone` sends sound too (48 kHz and two channels unless told otherwise): a sine on each channel (440, 880, 1320 and 1760 Hz, at −12 dB) and, each second, a 5 ms click at full scale on every channel at the moment of one picture which is white all over, so that `movie-info --sync` can measure the step between sound and picture. It ends on SIGTERM or Ctrl-C.
 
 `Tools/osc-send.py` sends an OSC message, and `Tools/mcp-call.py` calls a tool of an MCP server.
+
+Licence
+-------
+
+Simple Recorder, and everything added to this repository since it was forked from Syphon's Simple apps, is Copyright © 2026 Adrien Mondot, cie Adrien M. It is free software under the GNU General Public License, version 3 or (at your option) any later version: see [`LICENSE`](LICENSE).
+
+The code of Syphon's original Simple Client and Simple Server is Copyright 2010-2011 bangnoise (Tom Butterworth) & vade (Anton Marini) and their contributors, and keeps its BSD licence, in [`License.txt`](License.txt). The NDI headers in `ThirdParty/NDI/include` keep their MIT notice (see `ThirdParty/NDI/README.md`).
+
+Additional permission under GNU GPL version 3 section 7: if you modify this program, or any covered work, by linking or combining it with the NDI runtime library (`libndi`), or a modified version of that library, containing parts covered by the terms of the NDI SDK License Agreement, the licensors of this program grant you additional permission to convey the resulting work.
+
+NDI® is a registered trademark of Vizrt NDI AB.
